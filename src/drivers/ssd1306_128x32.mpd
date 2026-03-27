@@ -108,13 +108,16 @@ fun _flush(dev: i32)
 
 // ── GfxDriver callbacks ───────────────────────────────────────────────────────
 // color: 0 = black (off), non-zero = white (on)
+// set_pixel / fill_rect only update the local framebuffer — no I2C traffic.
+// flush sends the full 512-byte framebuffer once per gfx primitive.
 
 fun _gfx_set_pixel(x: i32, y: i32, color: i32)
     _fb_set_pixel(x, y, color)
-    _flush(_conn.device)
 
 fun _gfx_fill_rect(x: i32, y: i32, w: i32, h: i32, color: i32)
     _fb_fill_rect(x, y, w, h, color)
+
+fun _gfx_flush()
     _flush(_conn.device)
 
 // ── public attach ─────────────────────────────────────────────────────────────
@@ -145,3 +148,4 @@ fun display_attach_gfx(driver: &GfxDriver)
     driver.height    = 32
     driver.set_pixel = _gfx_set_pixel
     driver.fill_rect = _gfx_fill_rect
+    driver.flush     = _gfx_flush

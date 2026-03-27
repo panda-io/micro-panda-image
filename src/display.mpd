@@ -24,19 +24,19 @@ enum DisplayColor
 // User fills this with their wiring before calling display_attach_gfx().
 
 class DisplayConn
-    interface:      DisplayInterface
-    device:         i32   // I2C or SPI device handle from i2c_open / spi_open
-    dc_pin:         i32   // data/command pin (SPI only; set -1 for I2C)
-    reset_pin:      i32   // hardware reset pin (-1 = not used)
-    back_light_pin: i32   // backlight pin      (-1 = not used)
+    var interface:      DisplayInterface
+    var device:         i32   // I2C or SPI device handle from i2c_open / spi_open
+    var dc_pin:         i32   // data/command pin (SPI only; set -1 for I2C)
+    var reset_pin:      i32   // hardware reset pin (-1 = not used)
+    var back_light_pin: i32   // backlight pin      (-1 = not used)
 
 // ── driver-filled display info ────────────────────────────────────────────────
 // Display variant fills this inside display_attach_gfx().
 
 class DisplayInfo
-    width:  i32
-    height: i32
-    color:  DisplayColor
+    var width:  i32
+    var height: i32
+    var color:  DisplayColor
 
 // ── singletons ────────────────────────────────────────────────────────────────
 
