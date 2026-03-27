@@ -1,5 +1,0 @@
-import console::*
-
-fun main()
-    print_str("Hello, world!")
-    println()
