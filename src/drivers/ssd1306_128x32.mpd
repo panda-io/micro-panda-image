@@ -1,0 +1,147 @@
+// SSD1306 128×32 OLED — I2C
+// Requires: esp_driver_i2c
+//
+// Usage:
+//   var conn := display_conn()
+//   conn.interface = DisplayInterface.I2C
+//   conn.device    = my_i2c_dev
+//   conn.reset_pin = -1
+//   conn.back_light_pin = -1
+//   display_attach_gfx(gfx_driver())
+//   gfx_init()
+
+import display::*
+import gfx::*
+import i2c::*
+import gpio::*
+
+@raw("""
+#include <string.h>
+
+// 128×32 mono framebuffer: byte[0] = 0x40 (I2C data control), byte[1..512] = pixels
+// Page p, column c -> buf[p*128 + c + 1]; bit (y & 7) within byte, LSB = top row.
+static uint8_t __mp_ssd1306_32_fb[513];
+
+static inline void __mp_ssd1306_32_clear(void) {
+    memset(__mp_ssd1306_32_fb + 1, 0, 512);
+}
+
+static inline void __mp_ssd1306_32_set_pixel(int32_t x, int32_t y, int32_t on) {
+    if ((uint32_t)x >= 128u || (uint32_t)y >= 32u) return;
+    uint8_t *p = __mp_ssd1306_32_fb + 1 + (y >> 3) * 128 + x;
+    uint8_t  m = (uint8_t)(1u << (y & 7));
+    if (on) *p |= m; else *p &= ~m;
+}
+
+static inline void __mp_ssd1306_32_fill_rect(int32_t x, int32_t y,
+                                              int32_t w, int32_t h, int32_t on) {
+    for (int row = y; row < y + h; row++)
+        for (int col = x; col < x + w; col++)
+            __mp_ssd1306_32_set_pixel(col, row, on);
+}
+
+static inline __Slice_uint8_t __mp_ssd1306_32_fb_slice(void) {
+    return (__Slice_uint8_t){ __mp_ssd1306_32_fb, 513 };
+}
+""")
+
+@extern("__mp_ssd1306_32_clear")
+fun _fb_clear()
+
+@extern("__mp_ssd1306_32_set_pixel")
+fun _fb_set_pixel(x: i32, y: i32, on: i32)
+
+@extern("__mp_ssd1306_32_fill_rect")
+fun _fb_fill_rect(x: i32, y: i32, w: i32, h: i32, on: i32)
+
+@extern("__mp_ssd1306_32_fb_slice")
+fun _fb_slice() u8[]
+
+// ── internal helpers ──────────────────────────────────────────────────────────
+
+fun _cmd1(dev: i32, c: i32) i32
+    var buf: u8[2]
+    buf[0] = 0x00
+    buf[1] = u8(c)
+    return i2c_write(dev, buf, 2)
+
+fun _cmd2(dev: i32, c: i32, v: i32) i32
+    var buf: u8[3]
+    buf[0] = 0x00
+    buf[1] = u8(c)
+    buf[2] = u8(v)
+    return i2c_write(dev, buf, 3)
+
+fun _hw_init(dev: i32)
+    _cmd1(dev, 0xAE)        // display off
+    _cmd2(dev, 0xD5, 0x80)  // clock divide ratio
+    _cmd2(dev, 0xA8, 0x1F)  // multiplex ratio: 31 (= 32 rows)
+    _cmd2(dev, 0xD3, 0x00)  // display offset: 0
+    _cmd1(dev, 0x40)         // display start line: 0
+    _cmd2(dev, 0x8D, 0x14)  // charge pump: enable
+    _cmd2(dev, 0x20, 0x00)  // memory addressing: horizontal
+    _cmd1(dev, 0xA1)         // segment re-map
+    _cmd1(dev, 0xC8)         // COM scan: reverse
+    _cmd2(dev, 0xDA, 0x02)  // COM pins: sequential, no remap (128×32)
+    _cmd2(dev, 0x81, 0xCF)  // contrast
+    _cmd2(dev, 0xD9, 0xF1)  // pre-charge period
+    _cmd2(dev, 0xDB, 0x40)  // VCOMH deselect
+    _cmd1(dev, 0xA4)         // output follows RAM
+    _cmd1(dev, 0xA6)         // normal display
+    _cmd1(dev, 0xAF)         // display on
+
+fun _flush(dev: i32)
+    var col: u8[4]
+    col[0] = 0x00
+    col[1] = 0x21
+    col[2] = 0x00
+    col[3] = 0x7F
+    i2c_write(dev, col, 4)
+    var page: u8[4]
+    page[0] = 0x00
+    page[1] = 0x22
+    page[2] = 0x00
+    page[3] = 0x03   // 4 pages for 32 rows
+    i2c_write(dev, page, 4)
+    var fb: u8[] = _fb_slice()
+    i2c_write(dev, fb, 513)
+
+// ── GfxDriver callbacks ───────────────────────────────────────────────────────
+// color: 0 = black (off), non-zero = white (on)
+
+fun _gfx_set_pixel(x: i32, y: i32, color: i32)
+    _fb_set_pixel(x, y, color)
+    _flush(_conn.device)
+
+fun _gfx_fill_rect(x: i32, y: i32, w: i32, h: i32, color: i32)
+    _fb_fill_rect(x, y, w, h, color)
+    _flush(_conn.device)
+
+// ── public attach ─────────────────────────────────────────────────────────────
+
+fun display_attach_gfx(driver: &GfxDriver)
+    // fill display info
+    var info: &DisplayInfo = display_info()
+    info.width  = 128
+    info.height = 32
+    info.color  = DisplayColor.MONO
+
+    // reset if pin provided
+    if _conn.reset_pin >= 0
+        gpio_mode(_conn.reset_pin, GpioMode.OUTPUT)
+        gpio_write(_conn.reset_pin, GpioLevel.LOW)
+        gpio_write(_conn.reset_pin, GpioLevel.HIGH)
+
+    // init hardware
+    _hw_init(_conn.device)
+
+    // init framebuffer
+    var fb: u8[] = _fb_slice()
+    fb[0] = 0x40
+    _fb_clear()
+
+    // wire up gfx driver
+    driver.width     = 128
+    driver.height    = 32
+    driver.set_pixel = _gfx_set_pixel
+    driver.fill_rect = _gfx_fill_rect
