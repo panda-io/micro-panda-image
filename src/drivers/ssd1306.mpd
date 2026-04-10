@@ -19,13 +19,13 @@ import mcu32.allocator::Allocator
 
 val BUF_SIZE := 528    // fits 128×32 page_buf (513 B) plus allocator alignment; 128×64 writes in 2 passes
 
-fun _set_rotation(handle: &void, r: Rotation)
+fun _ssd1306_set_rotation(handle: &void, r: Rotation)
     &Ssd1306(handle)._set_rotation(r)
 
-fun _wait(handle: &void)
+fun _ssd1306_wait(handle: &void)
     // I2C transfers are synchronous; nothing to wait for
 
-fun _flush(handle: &void, rect: &Rect, buf: byte[])
+fun _ssd1306_flush(handle: &void, rect: &Rect, buf: byte[])
     &Ssd1306(handle)._flush(rect, buf)
 
 // ── device instance ───────────────────────────────────────────────────────────
@@ -149,9 +149,9 @@ fun _attach(display: &Ssd1306, conn: &DisplayConn, width: int, height: int)
     display.driver.width        = width
     display.driver.height       = height
     display.driver.handle       = &void(display)
-    display.driver.set_rotation = _set_rotation
-    display.driver.wait         = _wait
-    display.driver.flush        = _flush
+    display.driver.set_rotation = _ssd1306_set_rotation
+    display.driver.wait         = _ssd1306_wait
+    display.driver.flush        = _ssd1306_flush
 
 // ── variant attach functions ───────────────────────────────────────────────────
 

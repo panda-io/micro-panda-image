@@ -207,9 +207,9 @@ struct Ssd1306 {
 };
 
 void main__main(void);
-static void drivers__ssd1306___set_rotation(void* handle, Rotation r);
-static void drivers__ssd1306___wait(void* handle);
-static void drivers__ssd1306___flush(void* handle, Rect* rect, __Slice_uint8_t buf);
+static void drivers__ssd1306___ssd1306_set_rotation(void* handle, Rotation r);
+static void drivers__ssd1306___ssd1306_wait(void* handle);
+static void drivers__ssd1306___ssd1306_flush(void* handle, Rect* rect, __Slice_uint8_t buf);
 static int32_t drivers__ssd1306___cmd1(int32_t dev, int32_t c);
 static int32_t drivers__ssd1306___cmd2(int32_t dev, int32_t c, int32_t v);
 static void drivers__ssd1306___hw_init(int32_t dev, int32_t rows);
@@ -272,14 +272,14 @@ const float math__E = 2.71828182845904523536f;
 static int32_t __mp_argc = 0;
 static char** __mp_argv = NULL;
 
-static void drivers__ssd1306___set_rotation(void* handle, Rotation r) {
+static void drivers__ssd1306___ssd1306_set_rotation(void* handle, Rotation r) {
   Ssd1306__set_rotation(((Ssd1306*)(handle)), r);
 }
 
-static void drivers__ssd1306___wait(void* handle) {
+static void drivers__ssd1306___ssd1306_wait(void* handle) {
 }
 
-static void drivers__ssd1306___flush(void* handle, Rect* rect, __Slice_uint8_t buf) {
+static void drivers__ssd1306___ssd1306_flush(void* handle, Rect* rect, __Slice_uint8_t buf) {
   Ssd1306__flush(((Ssd1306*)(handle)), rect, buf);
 }
 
@@ -330,9 +330,9 @@ static void drivers__ssd1306___attach(Ssd1306* display, DisplayConn* conn, int32
   (display->driver.width = width);
   (display->driver.height = height);
   (display->driver.handle = ((void*)(display)));
-  (display->driver.set_rotation = drivers__ssd1306___set_rotation);
-  (display->driver.wait = drivers__ssd1306___wait);
-  (display->driver.flush = drivers__ssd1306___flush);
+  (display->driver.set_rotation = drivers__ssd1306___ssd1306_set_rotation);
+  (display->driver.wait = drivers__ssd1306___ssd1306_wait);
+  (display->driver.flush = drivers__ssd1306___ssd1306_flush);
 }
 
 void drivers__ssd1306__attach_ssd1306_128x32(Ssd1306* display, DisplayConn* conn) {
