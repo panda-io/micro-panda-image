@@ -1,0 +1,161 @@
+// SSD1306 OLED — I2C driver
+// One file per chip; variant types inside for different panel geometries.
+//
+// Usage (128×32 example):
+//   var alloc: Allocator
+//   alloc.init(some_mem_slice)
+//   var conn := display_conn()
+//   conn.interface = DisplayInterface.I2C
+//   conn.device    = my_i2c_dev
+//   conn.reset_pin = -1
+//   attach_ssd1306_128x32(&driver, &alloc)
+
+import display::*
+import graphics::*
+import geometry::*
+import i2c::*
+import gpio::*
+import mcu32.allocator::Allocator
+
+// Convert a Mono strip (row-major, MSB-left) into the SSD1306 page buffer.
+// page_buf[0] = 0x40 (I2C data control byte); page_buf[1..] = page-major pixels.
+// Page p, column x  ->  page_buf[1 + p * disp_w + x]; bit (y & 7), LSB = top row.
+fun _blit(dx: int, dy: int, w: int, h: int, disp_w: int, disp_h: int, src: byte[], page_buf: byte[])
+    val stride := (w + 7) / 8
+    for ry in 0..h
+        val abs_y := dy + ry
+        if abs_y >= 0 && abs_y < disp_h
+            val page := abs_y >> 3
+            val bit  := abs_y & 7
+            val row  := ry * stride
+            for rx in 0..w
+                val abs_x := dx + rx
+                if abs_x >= 0 && abs_x < disp_w
+                    val pixel := (int(src[row + (rx >> 3)]) >> (7 - (rx & 7))) & 1
+                    val p     := 1 + page * disp_w + abs_x
+                    if pixel != 0
+                        page_buf[p] = page_buf[p] | byte(1 << bit)
+                    else
+                        page_buf[p] = page_buf[p] & byte(~(1 << bit))
+
+// ── module state ──────────────────────────────────────────────────────────────
+
+var _width:    int
+var _height:   int
+var _page_buf: byte[]   // [0] = 0x40 (I2C data control), [1..] = SSD1306 page data
+
+// ── internal helpers ──────────────────────────────────────────────────────────
+
+fun _cmd1(dev: int, c: int) int
+    var buf: byte[2]
+    buf[0] = 0x00
+    buf[1] = byte(c)
+    return i2c_write(dev, buf, 2)
+
+fun _cmd2(dev: int, c: int, v: int) int
+    var buf: byte[3]
+    buf[0] = 0x00
+    buf[1] = byte(c)
+    buf[2] = byte(v)
+    return i2c_write(dev, buf, 3)
+
+fun _hw_init_128x32(dev: int)
+    _cmd1(dev, 0xAE)        // display off
+    _cmd2(dev, 0xD5, 0x80)  // clock divide ratio / oscillator frequency
+    _cmd2(dev, 0xA8, 0x1F)  // multiplex ratio: 31 (32 rows)
+    _cmd2(dev, 0xD3, 0x00)  // display offset: 0
+    _cmd1(dev, 0x40)        // display start line: 0
+    _cmd2(dev, 0x8D, 0x14)  // charge pump: enable
+    _cmd2(dev, 0x20, 0x00)  // memory addressing: horizontal
+    _cmd1(dev, 0xA1)        // segment re-map
+    _cmd1(dev, 0xC8)        // COM scan: reverse
+    _cmd2(dev, 0xDA, 0x02)  // COM pins: sequential, no remap (128×32)
+    _cmd2(dev, 0x81, 0xCF)  // contrast
+    _cmd2(dev, 0xD9, 0xF1)  // pre-charge period
+    _cmd2(dev, 0xDB, 0x40)  // VCOMH deselect
+    _cmd1(dev, 0xA4)        // output follows RAM
+    _cmd1(dev, 0xA6)        // normal display (not inverted)
+    _cmd1(dev, 0xAF)        // display on
+
+fun _hw_init_128x64(dev: int)
+    _cmd1(dev, 0xAE)        // display off
+    _cmd2(dev, 0xD5, 0x80)  // clock divide ratio / oscillator frequency
+    _cmd2(dev, 0xA8, 0x3F)  // multiplex ratio: 63 (64 rows)
+    _cmd2(dev, 0xD3, 0x00)  // display offset: 0
+    _cmd1(dev, 0x40)        // display start line: 0
+    _cmd2(dev, 0x8D, 0x14)  // charge pump: enable
+    _cmd2(dev, 0x20, 0x00)  // memory addressing: horizontal
+    _cmd1(dev, 0xA1)        // segment re-map
+    _cmd1(dev, 0xC8)        // COM scan: reverse
+    _cmd2(dev, 0xDA, 0x12)  // COM pins: alternative configuration, no remap (128×64)
+    _cmd2(dev, 0x81, 0xCF)  // contrast
+    _cmd2(dev, 0xD9, 0xF1)  // pre-charge period
+    _cmd2(dev, 0xDB, 0x40)  // VCOMH deselect
+    _cmd1(dev, 0xA4)        // output follows RAM
+    _cmd1(dev, 0xA6)        // normal display (not inverted)
+    _cmd1(dev, 0xAF)        // display on
+
+fun _send_page(dev: int)
+    val pages := _height >> 3
+    var col: byte[4]
+    col[0] = 0x00
+    col[1] = 0x21          // set column address
+    col[2] = 0x00
+    col[3] = byte(_width - 1)
+    i2c_write(dev, col, 4)
+    var page: byte[4]
+    page[0] = 0x00
+    page[1] = 0x22         // set page address
+    page[2] = 0x00
+    page[3] = byte(pages - 1)
+    i2c_write(dev, page, 4)
+    i2c_write(dev, _page_buf, 1 + pages * _width)
+
+// ── GraphicsDriver callbacks ──────────────────────────────────────────────────
+
+fun _gfx_set_rotation(r: Rotation)
+    // SSD1306 has no hardware rotation; logical rotation is handled by the GFX layer
+
+fun _gfx_wait()
+    // I2C transfers are synchronous; nothing to wait for
+
+fun _gfx_flush(rect: &Rect, buf: byte[])
+    _blit(rect.x, rect.y, rect.width, rect.height, _width, _height, buf, _page_buf)
+    _send_page(_conn.device)
+
+// ── shared attach logic ───────────────────────────────────────────────────────
+
+fun _attach_common(driver: &GraphicsDriver, alloc: &Allocator, w: int, h: int)
+    _width  = w
+    _height = h
+    val pages    := h >> 3
+    val buf_size := 1 + pages * w       // control byte + page data
+    _page_buf    = alloc.allocate_array<byte>(buf_size)
+    _page_buf[0] = 0x40                 // I2C data control byte
+
+    var info: &DisplayInfo = display_info()
+    info.width  = w
+    info.height = h
+    info.color  = DisplayColor.MONO
+
+    if _conn.reset_pin >= 0
+        gpio_mode(_conn.reset_pin, GpioMode.OUTPUT)
+        gpio_write(_conn.reset_pin, GpioLevel.LOW)
+        gpio_write(_conn.reset_pin, GpioLevel.HIGH)
+
+    driver.width        = w
+    driver.height       = h
+    driver.set_rotation = _gfx_set_rotation
+    driver.wait         = _gfx_wait
+    driver.flush        = _gfx_flush
+
+// ── variant attach functions ──────────────────────────────────────────────────
+
+fun attach_ssd1306_128x32(driver: &GraphicsDriver, alloc: &Allocator)
+    _attach_common(driver, alloc, 128, 32)
+    _hw_init_128x32(_conn.device)
+
+fun attach_ssd1306_128x64(driver: &GraphicsDriver, alloc: &Allocator)
+    _attach_common(driver, alloc, 128, 64)
+    _hw_init_128x64(_conn.device)
+    
