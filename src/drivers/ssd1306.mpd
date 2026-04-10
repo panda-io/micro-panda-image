@@ -42,9 +42,6 @@ class Ssd1306
     fun _set_rotation(r: Rotation)
         // SSD1306 has no hardware rotation; handled by the GFX layer
 
-    fun _wait()
-        // I2C transfers are synchronous; nothing to wait for
-
     fun _blit(rect: &Rect, src: byte[], page_start: int, page_count: int)
         val stride := _width >> 3                  // full display stride (bytes per row)
         for ry in 0..rect.height
