@@ -17,18 +17,27 @@ import i2c::*
 import gpio::*
 import mcu32.allocator::Allocator
 
-val HEAP_SIZE := 1040   // fits 128×64 page_buf (1025 B) plus allocator alignment
+val HEAP_SIZE := 528    // fits 128×32 page_buf (513 B) plus allocator alignment; 128×64 writes in 2 passes
+
+fun _set_rotation(handle: &void, r: Rotation)
+    &Ssd1306(handle)._set_rotation(r)
+
+fun _wait(handle: &void)
+    // I2C transfers are synchronous; nothing to wait for
+
+fun _flush(handle: &void, rect: &Rect, buf: byte[])
+    &Ssd1306(handle)._flush(rect, buf)
 
 // ── device instance ───────────────────────────────────────────────────────────
 
 class Ssd1306
-    var heap:     u8[HEAP_SIZE]   // allocator backing memory
-    var strip:    u8[512]         // 1-bpp mono framebuffer (128×32)
-    var driver:   GraphicsDriver
-    var gfx:      Graphics
-    var _dev:     int
-    var _width:   int
-    var _height:  int
+    var heap:      u8[HEAP_SIZE]   // allocator backing memory
+    var strip:     u8[512]         // 1-bpp mono framebuffer (128×32)
+    var driver:    GraphicsDriver
+    var gfx:       Graphics
+    var _dev:      int
+    var _width:    int
+    var _height:   int
     var _page_buf: byte[]
 
     fun _set_rotation(r: Rotation)
@@ -37,30 +46,45 @@ class Ssd1306
     fun _wait()
         // I2C transfers are synchronous; nothing to wait for
 
-    fun _blit(rect: &Rect, src: byte[])
-        val stride := (rect.width + 7) / 8
+    fun _blit(rect: &Rect, src: byte[], page_start: int, page_count: int)
+        val stride := _width >> 3                  // full display stride (bytes per row)
         for ry in 0..rect.height
             val abs_y := rect.y + ry
             if abs_y >= 0 && abs_y < _height
                 val page := abs_y >> 3
-                val bit  := abs_y & 7
-                val row  := ry * stride
-                for rx in 0..rect.width
-                    val abs_x := rect.x + rx
-                    if abs_x >= 0 && abs_x < _width
-                        val pixel := (int(src[row + (rx >> 3)]) >> (7 - (rx & 7))) & 1
-                        val p     := 1 + page * _width + abs_x
-                        if pixel != 0
-                            _page_buf[p] = _page_buf[p] | byte(1 << bit)
-                        else
-                            _page_buf[p] = _page_buf[p] & byte(~(1 << bit))
+                if page >= page_start && page < page_start + page_count
+                    val bit        := abs_y & 7
+                    val row        := abs_y * stride   // absolute row in src framebuffer
+                    val local_page := page - page_start
+                    for rx in 0..rect.width
+                        val abs_x := rect.x + rx
+                        if abs_x >= 0 && abs_x < _width
+                            val pixel := (int(src[row + (abs_x >> 3)]) >> (7 - (abs_x & 7))) & 1
+                            val p     := 1 + local_page * _width + abs_x
+                            if pixel != 0
+                                _page_buf[p] = _page_buf[p] | byte(1 << bit)
+                            else
+                                _page_buf[p] = _page_buf[p] & byte(~(1 << bit))
 
     fun _flush(rect: &Rect, buf: byte[])
-        _blit(rect, buf)
-        _send_page()
+        val total_pages := _height >> 3
+        val half        := 4                   // 4 pages = 32 rows per pass
+        val passes      := total_pages / half  // 1 for 128×32, 2 for 128×64
+        for pass in 0..passes
+            val ps := pass * half
+            // build rect covering this pass's 32-row band
+            var hr: Rect
+            hr.x      = 0
+            hr.y      = ps << 3
+            hr.width  = _width
+            hr.height = 32
+            // clear pixel bytes (keep 0x40 control byte at index 0)
+            for i in 1..1 + half * _width
+                _page_buf[i] = 0x00
+            _blit(&hr, buf, ps, half)
+            _send_pages(ps, half)
 
-    fun _send_page()
-        val pages := _height >> 3
+    fun _send_pages(page_start: int, page_count: int)
         var col: byte[4]
         col[0] = 0x00
         col[1] = 0x21          // set column address
@@ -70,10 +94,10 @@ class Ssd1306
         var page: byte[4]
         page[0] = 0x00
         page[1] = 0x22         // set page address
-        page[2] = 0x00
-        page[3] = byte(pages - 1)
+        page[2] = byte(page_start)
+        page[3] = byte(page_start + page_count - 1)
         i2c_write(_dev, page, 4)
-        i2c_write(_dev, _page_buf, 1 + pages * _width)
+        i2c_write(_dev, _page_buf, 1 + page_count * _width)
 
 // ── I2C command helpers ────────────────────────────────────────────────────────
 
@@ -81,14 +105,14 @@ fun _cmd1(dev: int, c: int) int
     var buf: byte[2]
     buf[0] = 0x00
     buf[1] = byte(c)
-    return i2c_write(dev, buf, 2)
+    return i2c_write(dev, {&buf[0], 2}, 2)
 
 fun _cmd2(dev: int, c: int, v: int) int
     var buf: byte[3]
     buf[0] = 0x00
     buf[1] = byte(c)
     buf[2] = byte(v)
-    return i2c_write(dev, buf, 3)
+    return i2c_write(dev, {&buf[0], 3}, 3)
 
 // ── hardware init sequences ────────────────────────────────────────────────────
 
@@ -136,8 +160,7 @@ fun _attach(d: &Ssd1306, conn: &DisplayConn, w: int, h: int)
     d._dev    = conn.device
     d._width  = w
     d._height = h
-    val pages    := h >> 3
-    val buf_size := 1 + pages * w
+    val buf_size := 1 + 4 * w       // always 4 pages (32 rows); 128×64 reuses via 2 passes
     d._page_buf    = alloc.allocate_array<byte>(buf_size)
     d._page_buf[0] = 0x40
 
@@ -148,9 +171,10 @@ fun _attach(d: &Ssd1306, conn: &DisplayConn, w: int, h: int)
 
     d.driver.width        = w
     d.driver.height       = h
-    d.driver.set_rotation = d._set_rotation
-    d.driver.wait         = d._wait
-    d.driver.flush        = d._flush
+    d.driver.handle       = &void(d)
+    d.driver.set_rotation = _set_rotation
+    d.driver.wait         = _wait
+    d.driver.flush        = _flush
 
 // ── variant attach functions ───────────────────────────────────────────────────
 
