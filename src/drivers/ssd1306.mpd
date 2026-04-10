@@ -37,8 +37,26 @@ class Ssd1306
     fun _wait()
         // I2C transfers are synchronous; nothing to wait for
 
+    fun _blit(rect: &Rect, src: byte[])
+        val stride := (rect.width + 7) / 8
+        for ry in 0..rect.height
+            val abs_y := rect.y + ry
+            if abs_y >= 0 && abs_y < _height
+                val page := abs_y >> 3
+                val bit  := abs_y & 7
+                val row  := ry * stride
+                for rx in 0..rect.width
+                    val abs_x := rect.x + rx
+                    if abs_x >= 0 && abs_x < _width
+                        val pixel := (int(src[row + (rx >> 3)]) >> (7 - (rx & 7))) & 1
+                        val p     := 1 + page * _width + abs_x
+                        if pixel != 0
+                            _page_buf[p] = _page_buf[p] | byte(1 << bit)
+                        else
+                            _page_buf[p] = _page_buf[p] & byte(~(1 << bit))
+
     fun _flush(rect: &Rect, buf: byte[])
-        _blit(rect.x, rect.y, rect.width, rect.height, _width, _height, buf, _page_buf)
+        _blit(rect, buf)
         _send_page()
 
     fun _send_page()
@@ -56,27 +74,6 @@ class Ssd1306
         page[3] = byte(pages - 1)
         i2c_write(_dev, page, 4)
         i2c_write(_dev, _page_buf, 1 + pages * _width)
-
-// ── blit: row-major mono → SSD1306 page buffer ────────────────────────────────
-// Page p, column x  →  page_buf[1 + p * disp_w + x]; bit (y & 7), LSB = top row.
-
-fun _blit(dx: int, dy: int, w: int, h: int, disp_w: int, disp_h: int, src: byte[], page_buf: byte[])
-    val stride := (w + 7) / 8
-    for ry in 0..h
-        val abs_y := dy + ry
-        if abs_y >= 0 && abs_y < disp_h
-            val page := abs_y >> 3
-            val bit  := abs_y & 7
-            val row  := ry * stride
-            for rx in 0..w
-                val abs_x := dx + rx
-                if abs_x >= 0 && abs_x < disp_w
-                    val pixel := (int(src[row + (rx >> 3)]) >> (7 - (rx & 7))) & 1
-                    val p     := 1 + page * disp_w + abs_x
-                    if pixel != 0
-                        page_buf[p] = page_buf[p] | byte(1 << bit)
-                    else
-                        page_buf[p] = page_buf[p] & byte(~(1 << bit))
 
 // ── I2C command helpers ────────────────────────────────────────────────────────
 

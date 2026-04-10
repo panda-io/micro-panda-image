@@ -3,7 +3,7 @@
 #include <stddef.h>
 
 typedef struct DisplayConn DisplayConn;
-typedef struct DisplayInfo DisplayInfo;
+typedef struct Ssd1306 Ssd1306;
 typedef struct Allocator Allocator;
 
 typedef enum {
@@ -114,10 +114,15 @@ struct DisplayConn {
   int32_t back_light_pin;
 };
 
-struct DisplayInfo {
-  int32_t width;
-  int32_t height;
-  DisplayColor color;
+struct Ssd1306 {
+  uint8_t heap[1];
+  uint8_t strip[512];
+  GraphicsDriver driver;
+  Graphics gfx;
+  int32_t _dev;
+  int32_t _width;
+  int32_t _height;
+  __Slice_uint8_t _page_buf;
 };
 
 struct Allocator {
@@ -126,18 +131,18 @@ struct Allocator {
 };
 
 void main__main(void);
-static void drivers__ssd1306___blit(int32_t dx, int32_t dy, int32_t w, int32_t h, int32_t disp_w, int32_t disp_h, __Slice_uint8_t src, __Slice_uint8_t page_buf);
 static int32_t drivers__ssd1306___cmd1(int32_t dev, int32_t c);
 static int32_t drivers__ssd1306___cmd2(int32_t dev, int32_t c, int32_t v);
 static void drivers__ssd1306___hw_init_128x32(int32_t dev);
 static void drivers__ssd1306___hw_init_128x64(int32_t dev);
-static void drivers__ssd1306___send_page(int32_t dev);
-static void drivers__ssd1306___gfx_set_rotation(Rotation r);
-static void drivers__ssd1306___gfx_wait(void);
-static void drivers__ssd1306___gfx_flush(Rect* rect, __Slice_uint8_t buf);
-static void drivers__ssd1306___attach_common(GraphicsDriver* driver, Allocator* alloc, DisplayConn* conn, DisplayInfo* info, int32_t w, int32_t h);
-void drivers__ssd1306__attach_ssd1306_128x32(GraphicsDriver* driver, Allocator* alloc, DisplayConn* conn, DisplayInfo* info);
-void drivers__ssd1306__attach_ssd1306_128x64(GraphicsDriver* driver, Allocator* alloc, DisplayConn* conn, DisplayInfo* info);
+static void drivers__ssd1306___attach(Ssd1306* d, DisplayConn* conn, int32_t w, int32_t h);
+Ssd1306* drivers__ssd1306__attach_ssd1306_128x32(Ssd1306* d, DisplayConn* conn);
+Ssd1306* drivers__ssd1306__attach_ssd1306_128x64(Ssd1306* d, DisplayConn* conn);
+static void Ssd1306__set_rotation(Ssd1306* this, Rotation r);
+static void Ssd1306__wait(Ssd1306* this);
+static void Ssd1306__blit(Ssd1306* this, Rect* rect, __Slice_uint8_t src);
+static void Ssd1306__flush(Ssd1306* this, Rect* rect, __Slice_uint8_t buf);
+static void Ssd1306__send_page(Ssd1306* this);
 int32_t i2c__i2c_init(int32_t bus, int32_t sda, int32_t scl, int32_t freq_hz);
 int32_t i2c__i2c_open(int32_t bus, int32_t addr);
 void i2c__i2c_close(int32_t dev);
@@ -152,37 +157,10 @@ static inline void* Allocator_allocate(Allocator* this, size_t __sizeof_T);
 static inline void Allocator_reset(Allocator* this);
 static inline __Slice_uint8_t Allocator_allocate_array_uint8_t(Allocator* this, int32_t length);
 
-static int32_t drivers__ssd1306___dev;
-static int32_t drivers__ssd1306___width;
-static int32_t drivers__ssd1306___height;
-static __Slice_uint8_t drivers__ssd1306___page_buf;
+int32_t drivers__ssd1306__HEAP_SIZE = 1040;
 
 static int32_t __mp_argc = 0;
 static char** __mp_argv = NULL;
-
-static void drivers__ssd1306___blit(int32_t dx, int32_t dy, int32_t w, int32_t h, int32_t disp_w, int32_t disp_h, __Slice_uint8_t src, __Slice_uint8_t page_buf) {
-  int32_t stride = ((w + 7) / 8);
-  for (int32_t ry = 0; ry < h; ry++) {
-    int32_t abs_y = (dy + ry);
-    if (((abs_y >= 0) && (abs_y < disp_h))) {
-      int32_t page = (abs_y >> 3);
-      int32_t bit = (abs_y & 7);
-      int32_t row = (ry * stride);
-      for (int32_t rx = 0; rx < w; rx++) {
-        int32_t abs_x = (dx + rx);
-        if (((abs_x >= 0) && (abs_x < disp_w))) {
-          int32_t pixel = ((((int32_t)(src.ptr[(row + (rx >> 3))])) >> (7 - (rx & 7))) & 1);
-          int32_t p = ((1 + (page * disp_w)) + abs_x);
-          if ((pixel != 0)) {
-            (page_buf.ptr[p] = (page_buf.ptr[p] | ((uint8_t)((1 << bit)))));
-          } else {
-            (page_buf.ptr[p] = (page_buf.ptr[p] & ((uint8_t)((~(1 << bit))))));
-          }
-        }
-      }
-    }
-  }
-}
 
 static int32_t drivers__ssd1306___cmd1(int32_t dev, int32_t c) {
   uint8_t buf[2];
@@ -237,65 +215,90 @@ static void drivers__ssd1306___hw_init_128x64(int32_t dev) {
   drivers__ssd1306___cmd1(dev, 0xAF);
 }
 
-static void drivers__ssd1306___send_page(int32_t dev) {
-  int32_t pages = (drivers__ssd1306___height >> 3);
-  uint8_t col[4];
-  (col[0] = 0x00);
-  (col[1] = 0x21);
-  (col[2] = 0x00);
-  (col[3] = ((uint8_t)((drivers__ssd1306___width - 1))));
-  i2c__i2c_write(dev, (__Slice_uint8_t){col, 4}, 4);
-  uint8_t page[4];
-  (page[0] = 0x00);
-  (page[1] = 0x22);
-  (page[2] = 0x00);
-  (page[3] = ((uint8_t)((pages - 1))));
-  i2c__i2c_write(dev, (__Slice_uint8_t){page, 4}, 4);
-  i2c__i2c_write(dev, drivers__ssd1306___page_buf, (1 + (pages * drivers__ssd1306___width)));
-}
-
-static void drivers__ssd1306___gfx_set_rotation(Rotation r) {
-}
-
-static void drivers__ssd1306___gfx_wait(void) {
-}
-
-static void drivers__ssd1306___gfx_flush(Rect* rect, __Slice_uint8_t buf) {
-  drivers__ssd1306___blit(rect->x, rect->y, rect->width, rect->height, drivers__ssd1306___width, drivers__ssd1306___height, buf, drivers__ssd1306___page_buf);
-  drivers__ssd1306___send_page(drivers__ssd1306___dev);
-}
-
-static void drivers__ssd1306___attach_common(GraphicsDriver* driver, Allocator* alloc, DisplayConn* conn, DisplayInfo* info, int32_t w, int32_t h) {
-  (drivers__ssd1306___dev = conn->device);
-  (drivers__ssd1306___width = w);
-  (drivers__ssd1306___height = h);
+static void drivers__ssd1306___attach(Ssd1306* d, DisplayConn* conn, int32_t w, int32_t h) {
+  Allocator alloc = {0};
+  Allocator_init((&alloc), d->heap);
+  (d->_dev = conn->device);
+  (d->_width = w);
+  (d->_height = h);
   int32_t pages = (h >> 3);
   int32_t buf_size = (1 + (pages * w));
-  (drivers__ssd1306___page_buf = Allocator_allocate_array_uint8_t(alloc, buf_size));
-  (drivers__ssd1306___page_buf.ptr[0] = 0x40);
-  (info->width = w);
-  (info->height = h);
-  (info->color = DisplayColor_MONO);
+  (d->_page_buf = Allocator_allocate_array_uint8_t((&alloc), buf_size));
+  (d->_page_buf.ptr[0] = 0x40);
   if ((conn->reset_pin >= 0)) {
     gpio__gpio_mode(conn->reset_pin, GpioMode_OUTPUT);
     gpio__gpio_write(conn->reset_pin, GpioLevel_LOW);
     gpio__gpio_write(conn->reset_pin, GpioLevel_HIGH);
   }
-  (driver->width = w);
-  (driver->height = h);
-  (driver->set_rotation = drivers__ssd1306___gfx_set_rotation);
-  (driver->wait = drivers__ssd1306___gfx_wait);
-  (driver->flush = drivers__ssd1306___gfx_flush);
+  (d->driver.width = w);
+  (d->driver.height = h);
+  (d->driver.set_rotation = d->_set_rotation);
+  (d->driver.wait = d->_wait);
+  (d->driver.flush = d->_flush);
 }
 
-void drivers__ssd1306__attach_ssd1306_128x32(GraphicsDriver* driver, Allocator* alloc, DisplayConn* conn, DisplayInfo* info) {
-  drivers__ssd1306___attach_common(driver, alloc, conn, info, 128, 32);
+Ssd1306* drivers__ssd1306__attach_ssd1306_128x32(Ssd1306* d, DisplayConn* conn) {
+  drivers__ssd1306___attach(d, conn, 128, 32);
   drivers__ssd1306___hw_init_128x32(conn->device);
+  return d;
 }
 
-void drivers__ssd1306__attach_ssd1306_128x64(GraphicsDriver* driver, Allocator* alloc, DisplayConn* conn, DisplayInfo* info) {
-  drivers__ssd1306___attach_common(driver, alloc, conn, info, 128, 64);
+Ssd1306* drivers__ssd1306__attach_ssd1306_128x64(Ssd1306* d, DisplayConn* conn) {
+  drivers__ssd1306___attach(d, conn, 128, 64);
   drivers__ssd1306___hw_init_128x64(conn->device);
+  return d;
+}
+
+static void Ssd1306__set_rotation(Ssd1306* this, Rotation r) {
+}
+
+static void Ssd1306__wait(Ssd1306* this) {
+}
+
+static void Ssd1306__blit(Ssd1306* this, Rect* rect, __Slice_uint8_t src) {
+  int32_t stride = ((rect->width + 7) / 8);
+  for (int32_t ry = 0; ry < rect->height; ry++) {
+    int32_t abs_y = (rect->y + ry);
+    if (((abs_y >= 0) && (abs_y < this->_height))) {
+      int32_t page = (abs_y >> 3);
+      int32_t bit = (abs_y & 7);
+      int32_t row = (ry * stride);
+      for (int32_t rx = 0; rx < rect->width; rx++) {
+        int32_t abs_x = (rect->x + rx);
+        if (((abs_x >= 0) && (abs_x < this->_width))) {
+          int32_t pixel = ((((int32_t)(src.ptr[(row + (rx >> 3))])) >> (7 - (rx & 7))) & 1);
+          int32_t p = ((1 + (page * this->_width)) + abs_x);
+          if ((pixel != 0)) {
+            (this->_page_buf.ptr[p] = (this->_page_buf.ptr[p] | ((uint8_t)((1 << bit)))));
+          } else {
+            (this->_page_buf.ptr[p] = (this->_page_buf.ptr[p] & ((uint8_t)((~(1 << bit))))));
+          }
+        }
+      }
+    }
+  }
+}
+
+static void Ssd1306__flush(Ssd1306* this, Rect* rect, __Slice_uint8_t buf) {
+  Ssd1306__blit(this, rect, buf);
+  Ssd1306__send_page(this);
+}
+
+static void Ssd1306__send_page(Ssd1306* this) {
+  int32_t pages = (this->_height >> 3);
+  uint8_t col[4];
+  (col[0] = 0x00);
+  (col[1] = 0x21);
+  (col[2] = 0x00);
+  (col[3] = ((uint8_t)((this->_width - 1))));
+  i2c__i2c_write(this->_dev, (__Slice_uint8_t){col, 4}, 4);
+  uint8_t page[4];
+  (page[0] = 0x00);
+  (page[1] = 0x22);
+  (page[2] = 0x00);
+  (page[3] = ((uint8_t)((pages - 1))));
+  i2c__i2c_write(this->_dev, (__Slice_uint8_t){page, 4}, 4);
+  i2c__i2c_write(this->_dev, this->_page_buf, (1 + (pages * this->_width)));
 }
 
 int32_t i2c__i2c_init(int32_t bus, int32_t sda, int32_t scl, int32_t freq_hz) {
