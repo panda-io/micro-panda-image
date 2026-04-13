@@ -158,6 +158,7 @@ fun _attach(display: &SSD1306, strip: byte[], page_buf: byte[], conn: &DisplayCo
     display.driver.width          = width
     display.driver.height         = height
     display.driver.strip0         = strip   // strip1 left empty → single-buffer mode
+    display.driver.strip1         = {null, 0}
     display.driver.handle         = &void(display)
     display.driver.set_rotation   = _ssd1306_set_rotation
     display.driver.wait           = _ssd1306_wait
