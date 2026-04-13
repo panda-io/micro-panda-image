@@ -6,18 +6,15 @@
 //   conn.interface = DisplayInterface.I2C
 //   conn.device    = my_i2c_dev
 //   conn.reset_pin = -1
-//   var disp: Ssd1306
+//   var disp: SSD1306_128x32
 //   attach_ssd1306_128x32(&disp, &conn)
-//   // disp.driver is ready; init gfx with &disp.driver
+//   // disp._ssd1306.driver is ready; strip buffer pre-wired — init gfx with &disp._ssd1306.driver
 
 import display::*
 import graphics::*
 import geometry::*
 import i2c::*
 import gpio::*
-import mcu32.allocator::Allocator
-
-val BUF_SIZE := 528    // fits 128×32 page_buf (513 B) plus allocator alignment; 128×64 writes in 2 passes
 
 fun _ssd1306_set_rotation(handle: &void, r: Rotation)
     &SSD1306(handle)._set_rotation(r)
@@ -29,19 +26,20 @@ fun _ssd1306_flush(handle: &void, rect: &Rect, buf: byte[])
     &SSD1306(handle)._flush(rect, buf)
 
 fun _ssd1306_frame_complete(handle: &void)
-    // write pages
+    &SSD1306(handle)._write_all_pages()
 
 
-// ── device instance ───────────────────────────────────────────────────────────
+// ── device instances ──────────────────────────────────────────────────────────
+
 class SSD1306_128x32
     var _ssd1306:  SSD1306
-    var _strip:    byte[256]
-    var _page_buf: byte[528]
+    var _strip:    byte[512]   // 128 × 32 / 8 — mono strip buffer (wired to driver.strip0)
+    var _page_buf: byte[513]   // 0x40 control byte + 4 pages × 128 columns
 
 class SSD1306_128x64
     var _ssd1306:  SSD1306
-    var _strip:    byte[1024]
-    var _page_buf: byte[1040]
+    var _strip:    byte[1024]  // 128 × 64 / 8
+    var _page_buf: byte[1025]  // 0x40 control byte + 8 pages × 128 columns
 
 class SSD1306
     var driver:    GraphicsDriver
@@ -54,58 +52,54 @@ class SSD1306
     fun _set_rotation(r: Rotation)
         // SSD1306 has no hardware rotation; handled by the GFX layer
 
+    // Convert strip pixels into SSD1306 page layout inside _page_buf.
+    // src is strip-local (row 0 = rect.y); writes to absolute page positions.
     fun _blit(rect: &Rect, src: byte[], page_start: int, page_count: int)
-        val stride := _width >> 3                       // full display stride (bytes per row)
+        val stride := _width >> 3                          // bytes per strip row
         for ry in 0..rect.height
             val abs_y := rect.y + ry
             if abs_y >= 0 && abs_y < _height
                 val page := abs_y >> 3
                 if page >= page_start && page < page_start + page_count
-                    val bit        := abs_y & 7
-                    val row        := abs_y * stride   // absolute row in src framebuffer
-                    val local_page := page - page_start
+                    val bit := abs_y & 7
+                    val row := ry * stride                 // strip-local row offset in src
                     for rx in 0..rect.width
                         val abs_x := rect.x + rx
                         if abs_x >= 0 && abs_x < _width
                             val pixel := (int(src[row + (abs_x >> 3)]) >> (7 - (abs_x & 7))) & 1
-                            val p     := 1 + local_page * _width + abs_x
+                            val p     := 1 + page * _width + abs_x  // absolute position in _page_buf
                             if pixel != 0
                                 _page_buf[p] = _page_buf[p] | byte(1 << bit)
                             else
                                 _page_buf[p] = _page_buf[p] & byte(~(1 << bit))
 
+    // Accumulate one strip into _page_buf. No I2C write here;
+    // frame_complete sends everything at once.
     fun _flush(rect: &Rect, buf: byte[])
-        val total_pages := _height >> 3
-        val half        := 4                   // 4 pages = 32 rows per pass
-        val passes      := total_pages / half  // 1 for 128×32, 2 for 128×64
-        for pass in 0..passes
-            val ps := pass * half
-            // build rect covering this pass's 32-row band
-            var hr: Rect
-            hr.x      = 0
-            hr.y      = ps << 3
-            hr.width  = _width
-            hr.height = 32
-            // clear pixel bytes (keep 0x40 control byte at index 0)
-            for i in 1..1 + half * _width
-                _page_buf[i] = 0x00
-            _blit(&hr, buf, ps, half)
-            _send_pages(ps, half)
+        val page_start := rect.y >> 3
+        val page_end   := (rect.y + rect.height + 7) >> 3
+        // clear pixel bytes for the affected pages (control byte at [0] stays)
+        for i in 1 + page_start * _width .. 1 + page_end * _width
+            _page_buf[i] = 0x00
+        _blit(rect, buf, page_start, page_end - page_start)
 
-    fun _send_pages(page_start: int, page_count: int)
+    // Send all accumulated pages to the display in a single I2C transaction.
+    fun _write_all_pages()
+        val total_pages := _height >> 3
         var col: byte[4]
         col[0] = 0x00
-        col[1] = 0x21          // set column address
+        col[1] = 0x21           // set column address
         col[2] = 0x00
         col[3] = byte(_width - 1)
         i2c_write(_device, col, 4)
         var page: byte[4]
         page[0] = 0x00
-        page[1] = 0x22         // set page address
-        page[2] = byte(page_start)
-        page[3] = byte(page_start + page_count - 1)
+        page[1] = 0x22          // set page address
+        page[2] = 0x00
+        page[3] = byte(total_pages - 1)
         i2c_write(_device, page, 4)
-        i2c_write(_device, _page_buf, 1 + page_count * _width)
+        i2c_write(_device, _page_buf, 1 + total_pages * _width)
+
 
 // ── I2C command helpers ────────────────────────────────────────────────────────
 
@@ -122,7 +116,8 @@ fun _cmd2(dev: int, c: int, v: int) int
     buf[2] = byte(v)
     return i2c_write(dev, {&buf[0], 3}, 3)
 
-// ── hardware init sequences ────────────────────────────────────────────────────
+
+// ── hardware init ─────────────────────────────────────────────────────────────
 
 fun _hw_init(dev: int, rows: int)
     _cmd1(dev, 0xAE)            // display off
@@ -134,7 +129,10 @@ fun _hw_init(dev: int, rows: int)
     _cmd2(dev, 0x20, 0x00)      // memory addressing: horizontal
     _cmd1(dev, 0xA1)            // segment re-map
     _cmd1(dev, 0xC8)            // COM scan: reverse
-    _cmd2(dev, 0xDA, 0x02)      // COM pins: sequential, no remap (128×32)
+    if rows == 32
+        _cmd2(dev, 0xDA, 0x02)  // COM pins: sequential, no remap (128×32)
+    else
+        _cmd2(dev, 0xDA, 0x12)  // COM pins: alternative, no remap (128×64)
     _cmd2(dev, 0x81, 0xCF)      // contrast
     _cmd2(dev, 0xD9, 0xF1)      // pre-charge period
     _cmd2(dev, 0xDB, 0x40)      // VCOMH deselect
@@ -142,14 +140,15 @@ fun _hw_init(dev: int, rows: int)
     _cmd1(dev, 0xA6)            // normal display (not inverted)
     _cmd1(dev, 0xAF)            // display on
 
+
 // ── shared attach logic ────────────────────────────────────────────────────────
 
-fun _attach(display: &SSD1306, page_buf: byte[], conn: &DisplayConn, width: int, height: int)
+fun _attach(display: &SSD1306, strip: byte[], page_buf: byte[], conn: &DisplayConn, width: int, height: int)
     display._device      = conn.device
     display._width       = width
     display._height      = height
     display._page_buf    = page_buf
-    display._page_buf[0] = 0x40
+    display._page_buf[0] = 0x40  // I2C data-stream control byte (fixed)
 
     if conn.reset_pin >= 0
         gpio_mode(conn.reset_pin, GpioMode.OUTPUT)
@@ -158,18 +157,20 @@ fun _attach(display: &SSD1306, page_buf: byte[], conn: &DisplayConn, width: int,
 
     display.driver.width          = width
     display.driver.height         = height
+    display.driver.strip0         = strip   // strip1 left empty → single-buffer mode
     display.driver.handle         = &void(display)
     display.driver.set_rotation   = _ssd1306_set_rotation
     display.driver.wait           = _ssd1306_wait
     display.driver.flush          = _ssd1306_flush
     display.driver.frame_complete = _ssd1306_frame_complete
 
+
 // ── variant attach functions ───────────────────────────────────────────────────
 
 fun attach_ssd1306_128x32(display: &SSD1306_128x32, conn: &DisplayConn)
-    _attach(&display._ssd1306, display._page_buf, conn, 128, 32)
+    _attach(&display._ssd1306, display._strip, display._page_buf, conn, 128, 32)
     _hw_init(conn.device, 32)
 
 fun attach_ssd1306_128x64(display: &SSD1306_128x64, conn: &DisplayConn)
-    _attach(&display._ssd1306, display._page_buf, conn, 128, 64)
+    _attach(&display._ssd1306, display._strip, display._page_buf, conn, 128, 64)
     _hw_init(conn.device, 64)
