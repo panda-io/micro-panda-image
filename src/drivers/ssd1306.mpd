@@ -59,25 +59,21 @@ class SSD1306
         // SSD1306 has no hardware rotation; handled by the GFX layer
 
     // Convert strip pixels into SSD1306 page layout inside _page_buf.
-    // src is strip-local (row 0 = rect.y); writes to absolute page positions.
-    fun _blit(rect: &Rect, src: byte[], page_start: int, page_count: int)
-        val stride := _width >> 3                          // bytes per strip row
+    // src is strip-local (row 0 = rect.y); gfx guarantees rect is within display bounds.
+    fun _blit(rect: &Rect, src: byte[])
+        val stride := _width >> 3
         for ry in 0..rect.height
-            val abs_y := rect.y + ry
-            if abs_y >= 0 && abs_y < _height
-                val page := abs_y >> 3
-                if page >= page_start && page < page_start + page_count
-                    val bit := abs_y & 7
-                    val row := ry * stride                 // strip-local row offset in src
-                    for rx in 0..rect.width
-                        val abs_x := rect.x + rx
-                        if abs_x >= 0 && abs_x < _width
-                            val pixel := (int(src[row + (abs_x >> 3)]) >> (7 - (abs_x & 7))) & 1
-                            val p     := 1 + page * _width + abs_x  // absolute position in _page_buf
-                            if pixel != 0
-                                _page_buf[p] = _page_buf[p] | byte(1 << bit)
-                            else
-                                _page_buf[p] = _page_buf[p] & byte(~(1 << bit))
+            val y    := rect.y + ry
+            val bit  := y & 7
+            val row  := ry * stride
+            val base := 1 + (y >> 3) * _width
+            for rx in 0..rect.width
+                val x     := rect.x + rx
+                val pixel := (int(src[row + (x >> 3)]) >> (7 - (x & 7))) & 1
+                if pixel != 0
+                    _page_buf[base + x] = _page_buf[base + x] | byte(1 << bit)
+                else
+                    _page_buf[base + x] = _page_buf[base + x] & byte(~(1 << bit))
 
     // Accumulate one strip into _page_buf. No I2C write here;
     // frame_complete sends everything at once.
@@ -87,7 +83,7 @@ class SSD1306
         // clear pixel bytes for the affected pages (control byte at [0] stays)
         for i in 1 + page_start * _width .. 1 + page_end * _width
             _page_buf[i] = 0x00
-        _blit(rect, buf, page_start, page_end - page_start)
+        _blit(rect, buf)
 
     // Send all accumulated pages to the display in a single I2C transaction.
     fun _write_all_pages()
