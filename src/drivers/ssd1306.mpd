@@ -20,30 +20,42 @@ import mcu32.allocator::Allocator
 val BUF_SIZE := 528    // fits 128×32 page_buf (513 B) plus allocator alignment; 128×64 writes in 2 passes
 
 fun _ssd1306_set_rotation(handle: &void, r: Rotation)
-    &Ssd1306(handle)._set_rotation(r)
+    &SSD1306(handle)._set_rotation(r)
 
 fun _ssd1306_wait(handle: &void)
     // I2C transfers are synchronous; nothing to wait for
 
 fun _ssd1306_flush(handle: &void, rect: &Rect, buf: byte[])
-    &Ssd1306(handle)._flush(rect, buf)
+    &SSD1306(handle)._flush(rect, buf)
+
+fun _ssd1306_frame_complete(handle: &void)
+    // write pages
+
 
 // ── device instance ───────────────────────────────────────────────────────────
+class SSD1306_128x32
+    var _ssd1306:  SSD1306
+    var _strip:    byte[256]
+    var _page_buf: byte[528]
 
-class Ssd1306
-    var strip:     byte[512]         // 1-bpp mono framebuffer (128×32)
+class SSD1306_128x64
+    var _ssd1306:  SSD1306
+    var _strip:    byte[1024]
+    var _page_buf: byte[1040]
+
+class SSD1306
     var driver:    GraphicsDriver
     var gfx:       Graphics
-    var _dev:      int
+    var _device:   int
     var _width:    int
     var _height:   int
-    var _page_buf: byte[BUF_SIZE]
+    var _page_buf: byte[]
 
     fun _set_rotation(r: Rotation)
         // SSD1306 has no hardware rotation; handled by the GFX layer
 
     fun _blit(rect: &Rect, src: byte[], page_start: int, page_count: int)
-        val stride := _width >> 3                  // full display stride (bytes per row)
+        val stride := _width >> 3                       // full display stride (bytes per row)
         for ry in 0..rect.height
             val abs_y := rect.y + ry
             if abs_y >= 0 && abs_y < _height
@@ -86,14 +98,14 @@ class Ssd1306
         col[1] = 0x21          // set column address
         col[2] = 0x00
         col[3] = byte(_width - 1)
-        i2c_write(_dev, col, 4)
+        i2c_write(_device, col, 4)
         var page: byte[4]
         page[0] = 0x00
         page[1] = 0x22         // set page address
         page[2] = byte(page_start)
         page[3] = byte(page_start + page_count - 1)
-        i2c_write(_dev, page, 4)
-        i2c_write(_dev, _page_buf, 1 + page_count * _width)
+        i2c_write(_device, page, 4)
+        i2c_write(_device, _page_buf, 1 + page_count * _width)
 
 // ── I2C command helpers ────────────────────────────────────────────────────────
 
@@ -115,7 +127,7 @@ fun _cmd2(dev: int, c: int, v: int) int
 fun _hw_init(dev: int, rows: int)
     _cmd1(dev, 0xAE)            // display off
     _cmd2(dev, 0xD5, 0x80)      // clock divide ratio / oscillator frequency
-    _cmd2(dev, 0xA8, rows - 1)  // multiplex ratio: 31 (32 rows)
+    _cmd2(dev, 0xA8, rows - 1)  // multiplex ratio
     _cmd2(dev, 0xD3, 0x00)      // display offset: 0
     _cmd1(dev, 0x40)            // display start line: 0
     _cmd2(dev, 0x8D, 0x14)      // charge pump: enable
@@ -132,10 +144,11 @@ fun _hw_init(dev: int, rows: int)
 
 // ── shared attach logic ────────────────────────────────────────────────────────
 
-fun _attach(display: &Ssd1306, conn: &DisplayConn, width: int, height: int)
-    display._dev    = conn.device
-    display._width  = width
-    display._height = height
+fun _attach(display: &SSD1306, page_buf: byte[], conn: &DisplayConn, width: int, height: int)
+    display._device      = conn.device
+    display._width       = width
+    display._height      = height
+    display._page_buf    = page_buf
     display._page_buf[0] = 0x40
 
     if conn.reset_pin >= 0
@@ -143,19 +156,20 @@ fun _attach(display: &Ssd1306, conn: &DisplayConn, width: int, height: int)
         gpio_write(conn.reset_pin, GpioLevel.LOW)
         gpio_write(conn.reset_pin, GpioLevel.HIGH)
 
-    display.driver.width        = width
-    display.driver.height       = height
-    display.driver.handle       = &void(display)
-    display.driver.set_rotation = _ssd1306_set_rotation
-    display.driver.wait         = _ssd1306_wait
-    display.driver.flush        = _ssd1306_flush
+    display.driver.width          = width
+    display.driver.height         = height
+    display.driver.handle         = &void(display)
+    display.driver.set_rotation   = _ssd1306_set_rotation
+    display.driver.wait           = _ssd1306_wait
+    display.driver.flush          = _ssd1306_flush
+    display.driver.frame_complete = _ssd1306_frame_complete
 
 // ── variant attach functions ───────────────────────────────────────────────────
 
-fun attach_ssd1306_128x32(display: &Ssd1306, conn: &DisplayConn)
-    _attach(display, conn, 128, 32)
+fun attach_ssd1306_128x32(display: &SSD1306_128x32, conn: &DisplayConn)
+    _attach(&display._ssd1306, display._page_buf, conn, 128, 32)
     _hw_init(conn.device, 32)
 
-fun attach_ssd1306_128x64(display: &Ssd1306, conn: &DisplayConn)
-    _attach(display, conn, 128, 64)
+fun attach_ssd1306_128x64(display: &SSD1306_128x64, conn: &DisplayConn)
+    _attach(&display._ssd1306, display._page_buf, conn, 128, 64)
     _hw_init(conn.device, 64)
