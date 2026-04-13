@@ -3,12 +3,13 @@
 #include <stddef.h>
 
 typedef struct DisplayConn DisplayConn;
-typedef struct Ssd1306 Ssd1306;
+typedef struct SSD1306_128x32 SSD1306_128x32;
+typedef struct SSD1306_128x64 SSD1306_128x64;
+typedef struct SSD1306 SSD1306;
 typedef struct GraphicsDriver GraphicsDriver;
 typedef struct Graphics Graphics;
 typedef struct Point Point;
 typedef struct Rect Rect;
-typedef struct Allocator Allocator;
 typedef struct Node Node;
 typedef struct RenderContext RenderContext;
 
@@ -56,8 +57,8 @@ typedef enum {
 typedef struct { uint8_t* ptr; int32_t size; } __Slice_uint8_t;
 
 typedef void (*__Fn_void_void_p_Rotation)(void*, Rotation);
-typedef void (*__Fn_void_void_p)(void*);
 typedef void (*__Fn_void_void_p_Rect_p_Slice_uint8_t)(void*, Rect*, __Slice_uint8_t);
+typedef void (*__Fn_void_void_p)(void*);
 typedef void (*__Fn_void_RenderContext_p_Point_p_void_p)(RenderContext*, Point*, void*);
 
 #define PWM_MAX_CHANNELS 8
@@ -149,10 +150,13 @@ struct DisplayConn {
 struct GraphicsDriver {
   int32_t width;
   int32_t height;
+  __Slice_uint8_t strip0;
+  __Slice_uint8_t strip1;
   void* handle;
   __Fn_void_void_p_Rotation set_rotation;
-  __Fn_void_void_p wait;
   __Fn_void_void_p_Rect_p_Slice_uint8_t flush;
+  __Fn_void_void_p wait;
+  __Fn_void_void_p frame_complete;
 };
 
 struct Point {
@@ -165,11 +169,6 @@ struct Rect {
   int32_t y;
   int32_t width;
   int32_t height;
-};
-
-struct Allocator {
-  __Slice_uint8_t _memory;
-  int32_t _cursor;
 };
 
 struct Node {
@@ -196,33 +195,46 @@ struct Graphics {
   RenderContext _context;
 };
 
-struct Ssd1306 {
-  uint8_t strip[512];
+struct SSD1306 {
   GraphicsDriver driver;
   Graphics gfx;
-  int32_t _dev;
+  int32_t _device;
   int32_t _width;
   int32_t _height;
-  uint8_t _page_buf[1];
+  __Slice_uint8_t _page_buf;
+};
+
+struct SSD1306_128x32 {
+  SSD1306 _ssd1306;
+  uint8_t _strip[512];
+  uint8_t _page_buf[513];
+};
+
+struct SSD1306_128x64 {
+  SSD1306 _ssd1306;
+  uint8_t _strip[1024];
+  uint8_t _page_buf[1025];
 };
 
 void main__main(void);
 static void drivers__ssd1306___ssd1306_set_rotation(void* handle, Rotation r);
 static void drivers__ssd1306___ssd1306_wait(void* handle);
 static void drivers__ssd1306___ssd1306_flush(void* handle, Rect* rect, __Slice_uint8_t buf);
+static void drivers__ssd1306___ssd1306_frame_complete(void* handle);
 static int32_t drivers__ssd1306___cmd1(int32_t dev, int32_t c);
 static int32_t drivers__ssd1306___cmd2(int32_t dev, int32_t c, int32_t v);
 static void drivers__ssd1306___hw_init(int32_t dev, int32_t rows);
-static void drivers__ssd1306___attach(Ssd1306* display, DisplayConn* conn, int32_t width, int32_t height);
-void drivers__ssd1306__attach_ssd1306_128x32(Ssd1306* display, DisplayConn* conn);
-void drivers__ssd1306__attach_ssd1306_128x64(Ssd1306* display, DisplayConn* conn);
-static void Ssd1306__set_rotation(Ssd1306* this, Rotation r);
-static void Ssd1306__wait(Ssd1306* this);
-static void Ssd1306__blit(Ssd1306* this, Rect* rect, __Slice_uint8_t src, int32_t page_start, int32_t page_count);
-static void Ssd1306__flush(Ssd1306* this, Rect* rect, __Slice_uint8_t buf);
-static void Ssd1306__send_pages(Ssd1306* this, int32_t page_start, int32_t page_count);
+static void drivers__ssd1306___attach(SSD1306* display, __Slice_uint8_t strip, __Slice_uint8_t page_buf, DisplayConn* conn, int32_t width, int32_t height);
+void drivers__ssd1306__attach_ssd1306_128x32(SSD1306_128x32* display, DisplayConn* conn);
+void drivers__ssd1306__attach_ssd1306_128x64(SSD1306_128x64* display, DisplayConn* conn);
+GraphicsDriver* SSD1306_128x32_get_driver(SSD1306_128x32* this);
+GraphicsDriver* SSD1306_128x64_get_driver(SSD1306_128x64* this);
+static void SSD1306__set_rotation(SSD1306* this, Rotation r);
+static void SSD1306__blit(SSD1306* this, Rect* rect, __Slice_uint8_t src);
+static void SSD1306__flush(SSD1306* this, Rect* rect, __Slice_uint8_t buf);
+static void SSD1306__write_all_pages(SSD1306* this);
 void Graphics_set_root(Graphics* this, Node* node);
-void Graphics_init(Graphics* this, GraphicsDriver* driver, __Slice_uint8_t buffer0, __Slice_uint8_t buffer1, PixelFormat pixel_format, uint16_t background, Rotation rotation, bool dirty_render);
+void Graphics_init(Graphics* this, GraphicsDriver* driver, PixelFormat pixel_format, uint16_t background, Rotation rotation, bool dirty_render);
 void Graphics_mark_dirty(Graphics* this, Rect* rect);
 void Graphics_render(Graphics* this);
 static __Slice_uint8_t Graphics__front_strip(Graphics* this);
@@ -242,10 +254,6 @@ int32_t i2c__i2c_write_read(int32_t dev, __Slice_uint8_t tx, int32_t tx_len, __S
 void gpio__gpio_mode(int32_t pin, GpioMode mode);
 static inline void gpio__gpio_write(int32_t pin, GpioLevel value);
 static inline GpioLevel gpio__gpio_read(int32_t pin);
-void Allocator_init(Allocator* this, __Slice_uint8_t mem);
-static inline void* Allocator_allocate(Allocator* this, size_t __sizeof_T);
-static inline int32_t Allocator_available(Allocator* this);
-static inline void Allocator_reset(Allocator* this);
 static inline int32_t math__floor_q16(int32_t value);
 static inline int32_t math__ceil_q16(int32_t value);
 static inline int32_t math__round_q16(int32_t value);
@@ -255,8 +263,8 @@ static inline int32_t math__round_fixed(int32_t value);
 static inline bool RenderContext_intersect(RenderContext* this, Rect* rect);
 void RenderContext_set_pixel(RenderContext* this, Point* point, uint16_t color);
 void RenderContext_fill_rect(RenderContext* this, Rect* rect, uint16_t color);
-static inline void RenderContext__set_pixel_mono(RenderContext* this, int32_t x, int32_t y, uint16_t color);
-static inline void RenderContext__set_pixel_rgb565(RenderContext* this, int32_t x, int32_t y, uint16_t color);
+static inline void RenderContext__set_pixel_mono(RenderContext* this, Point* point, uint16_t color);
+static inline void RenderContext__set_pixel_rgb565(RenderContext* this, Point* point, uint16_t color);
 static inline void memory__memory_set(__Slice_uint8_t dst, uint8_t value);
 static inline void memory__memory_copy(__Slice_uint8_t dst, __Slice_uint8_t src, int32_t size);
 static inline void memory__memory_move(__Slice_uint8_t dst, __Slice_uint8_t src, int32_t size);
@@ -264,7 +272,6 @@ static inline void memory__memory_zero(__Slice_uint8_t dst);
 static inline int32_t math__min_int32_t(int32_t a, int32_t b);
 static inline int32_t math__max_int32_t(int32_t a, int32_t b);
 
-int32_t drivers__ssd1306__BUF_SIZE = 528;
 const float math__PI = 3.14159265358979323846f;
 const float math__TAU = 6.28318530717958647692f;
 const float math__E = 2.71828182845904523536f;
@@ -273,14 +280,18 @@ static int32_t __mp_argc = 0;
 static char** __mp_argv = NULL;
 
 static void drivers__ssd1306___ssd1306_set_rotation(void* handle, Rotation r) {
-  Ssd1306__set_rotation(((Ssd1306*)(handle)), r);
+  SSD1306__set_rotation(((SSD1306*)(handle)), r);
 }
 
 static void drivers__ssd1306___ssd1306_wait(void* handle) {
 }
 
 static void drivers__ssd1306___ssd1306_flush(void* handle, Rect* rect, __Slice_uint8_t buf) {
-  Ssd1306__flush(((Ssd1306*)(handle)), rect, buf);
+  SSD1306__flush(((SSD1306*)(handle)), rect, buf);
+}
+
+static void drivers__ssd1306___ssd1306_frame_complete(void* handle) {
+  SSD1306__write_all_pages(((SSD1306*)(handle)));
 }
 
 static int32_t drivers__ssd1306___cmd1(int32_t dev, int32_t c) {
@@ -308,7 +319,11 @@ static void drivers__ssd1306___hw_init(int32_t dev, int32_t rows) {
   drivers__ssd1306___cmd2(dev, 0x20, 0x00);
   drivers__ssd1306___cmd1(dev, 0xA1);
   drivers__ssd1306___cmd1(dev, 0xC8);
-  drivers__ssd1306___cmd2(dev, 0xDA, 0x02);
+  if ((rows == 32)) {
+    drivers__ssd1306___cmd2(dev, 0xDA, 0x02);
+  } else {
+    drivers__ssd1306___cmd2(dev, 0xDA, 0x12);
+  }
   drivers__ssd1306___cmd2(dev, 0x81, 0xCF);
   drivers__ssd1306___cmd2(dev, 0xD9, 0xF1);
   drivers__ssd1306___cmd2(dev, 0xDB, 0x40);
@@ -317,11 +332,12 @@ static void drivers__ssd1306___hw_init(int32_t dev, int32_t rows) {
   drivers__ssd1306___cmd1(dev, 0xAF);
 }
 
-static void drivers__ssd1306___attach(Ssd1306* display, DisplayConn* conn, int32_t width, int32_t height) {
-  (display->_dev = conn->device);
+static void drivers__ssd1306___attach(SSD1306* display, __Slice_uint8_t strip, __Slice_uint8_t page_buf, DisplayConn* conn, int32_t width, int32_t height) {
+  (display->_device = conn->device);
   (display->_width = width);
   (display->_height = height);
-  (display->_page_buf[0] = 0x40);
+  (display->_page_buf = page_buf);
+  (display->_page_buf.ptr[0] = 0x40);
   if ((conn->reset_pin >= 0)) {
     gpio__gpio_mode(conn->reset_pin, GpioMode_OUTPUT);
     gpio__gpio_write(conn->reset_pin, GpioLevel_LOW);
@@ -329,102 +345,93 @@ static void drivers__ssd1306___attach(Ssd1306* display, DisplayConn* conn, int32
   }
   (display->driver.width = width);
   (display->driver.height = height);
+  (display->driver.strip0 = strip);
+  (display->driver.strip1 = (__Slice_uint8_t){NULL, 0});
   (display->driver.handle = ((void*)(display)));
   (display->driver.set_rotation = drivers__ssd1306___ssd1306_set_rotation);
   (display->driver.wait = drivers__ssd1306___ssd1306_wait);
   (display->driver.flush = drivers__ssd1306___ssd1306_flush);
+  (display->driver.frame_complete = drivers__ssd1306___ssd1306_frame_complete);
 }
 
-void drivers__ssd1306__attach_ssd1306_128x32(Ssd1306* display, DisplayConn* conn) {
-  drivers__ssd1306___attach(display, conn, 128, 32);
+void drivers__ssd1306__attach_ssd1306_128x32(SSD1306_128x32* display, DisplayConn* conn) {
+  drivers__ssd1306___attach((&display->_ssd1306), (__Slice_uint8_t){display->_strip, 512}, (__Slice_uint8_t){display->_page_buf, 513}, conn, 128, 32);
   drivers__ssd1306___hw_init(conn->device, 32);
 }
 
-void drivers__ssd1306__attach_ssd1306_128x64(Ssd1306* display, DisplayConn* conn) {
-  drivers__ssd1306___attach(display, conn, 128, 64);
+void drivers__ssd1306__attach_ssd1306_128x64(SSD1306_128x64* display, DisplayConn* conn) {
+  drivers__ssd1306___attach((&display->_ssd1306), (__Slice_uint8_t){display->_strip, 1024}, (__Slice_uint8_t){display->_page_buf, 1025}, conn, 128, 64);
   drivers__ssd1306___hw_init(conn->device, 64);
 }
 
-static void Ssd1306__set_rotation(Ssd1306* this, Rotation r) {
+GraphicsDriver* SSD1306_128x32_get_driver(SSD1306_128x32* this) {
+  return (&this->_ssd1306.driver);
 }
 
-static void Ssd1306__wait(Ssd1306* this) {
+GraphicsDriver* SSD1306_128x64_get_driver(SSD1306_128x64* this) {
+  return (&this->_ssd1306.driver);
 }
 
-static void Ssd1306__blit(Ssd1306* this, Rect* rect, __Slice_uint8_t src, int32_t page_start, int32_t page_count) {
+static void SSD1306__set_rotation(SSD1306* this, Rotation r) {
+}
+
+static void SSD1306__blit(SSD1306* this, Rect* rect, __Slice_uint8_t src) {
   int32_t stride = (this->_width >> 3);
   for (int32_t ry = 0; ry < rect->height; ry++) {
-    int32_t abs_y = (rect->y + ry);
-    if (((abs_y >= 0) && (abs_y < this->_height))) {
-      int32_t page = (abs_y >> 3);
-      if (((page >= page_start) && (page < (page_start + page_count)))) {
-        int32_t bit = (abs_y & 7);
-        int32_t row = (abs_y * stride);
-        int32_t local_page = (page - page_start);
-        for (int32_t rx = 0; rx < rect->width; rx++) {
-          int32_t abs_x = (rect->x + rx);
-          if (((abs_x >= 0) && (abs_x < this->_width))) {
-            int32_t pixel = ((((int32_t)(src.ptr[(row + (abs_x >> 3))])) >> (7 - (abs_x & 7))) & 1);
-            int32_t p = ((1 + (local_page * this->_width)) + abs_x);
-            if ((pixel != 0)) {
-              (this->_page_buf[p] = (this->_page_buf[p] | ((uint8_t)((1 << bit)))));
-            } else {
-              (this->_page_buf[p] = (this->_page_buf[p] & ((uint8_t)((~(1 << bit))))));
-            }
-          }
-        }
+    int32_t y = (rect->y + ry);
+    int32_t bit = (y & 7);
+    int32_t row = (ry * stride);
+    int32_t base = (1 + ((y >> 3) * this->_width));
+    for (int32_t rx = 0; rx < rect->width; rx++) {
+      int32_t x = (rect->x + rx);
+      int32_t pixel = ((((int32_t)(src.ptr[(row + (x >> 3))])) >> (7 - (x & 7))) & 1);
+      if ((pixel != 0)) {
+        (this->_page_buf.ptr[(base + x)] = (this->_page_buf.ptr[(base + x)] | ((uint8_t)((1 << bit)))));
+      } else {
+        (this->_page_buf.ptr[(base + x)] = (this->_page_buf.ptr[(base + x)] & ((uint8_t)((~(1 << bit))))));
       }
     }
   }
 }
 
-static void Ssd1306__flush(Ssd1306* this, Rect* rect, __Slice_uint8_t buf) {
-  int32_t total_pages = (this->_height >> 3);
-  int32_t half = 4;
-  int32_t passes = (total_pages / half);
-  for (int32_t pass = 0; pass < passes; pass++) {
-    int32_t ps = (pass * half);
-    Rect hr = {0};
-    (hr.x = 0);
-    (hr.y = (ps << 3));
-    (hr.width = this->_width);
-    (hr.height = 32);
-    for (int32_t i = 1; i < (1 + (half * this->_width)); i++) {
-      (this->_page_buf[i] = 0x00);
-    }
-    Ssd1306__blit(this, (&hr), buf, ps, half);
-    Ssd1306__send_pages(this, ps, half);
+static void SSD1306__flush(SSD1306* this, Rect* rect, __Slice_uint8_t buf) {
+  int32_t page_start = (rect->y >> 3);
+  int32_t page_end = (((rect->y + rect->height) + 7) >> 3);
+  for (int32_t i = (1 + (page_start * this->_width)); i < (1 + (page_end * this->_width)); i++) {
+    (this->_page_buf.ptr[i] = 0x00);
   }
+  SSD1306__blit(this, rect, buf);
 }
 
-static void Ssd1306__send_pages(Ssd1306* this, int32_t page_start, int32_t page_count) {
+static void SSD1306__write_all_pages(SSD1306* this) {
+  int32_t total_pages = (this->_height >> 3);
   uint8_t col[4];
   (col[0] = 0x00);
   (col[1] = 0x21);
   (col[2] = 0x00);
   (col[3] = ((uint8_t)((this->_width - 1))));
-  i2c__i2c_write(this->_dev, (__Slice_uint8_t){col, 4}, 4);
+  i2c__i2c_write(this->_device, (__Slice_uint8_t){col, 4}, 4);
   uint8_t page[4];
   (page[0] = 0x00);
   (page[1] = 0x22);
-  (page[2] = ((uint8_t)(page_start)));
-  (page[3] = ((uint8_t)(((page_start + page_count) - 1))));
-  i2c__i2c_write(this->_dev, (__Slice_uint8_t){page, 4}, 4);
-  i2c__i2c_write(this->_dev, this->_page_buf, (1 + (page_count * this->_width)));
+  (page[2] = 0x00);
+  (page[3] = ((uint8_t)((total_pages - 1))));
+  i2c__i2c_write(this->_device, (__Slice_uint8_t){page, 4}, 4);
+  i2c__i2c_write(this->_device, this->_page_buf, (1 + (total_pages * this->_width)));
 }
 
 void Graphics_set_root(Graphics* this, Node* node) {
   (this->_root = node);
 }
 
-void Graphics_init(Graphics* this, GraphicsDriver* driver, __Slice_uint8_t buffer0, __Slice_uint8_t buffer1, PixelFormat pixel_format, uint16_t background, Rotation rotation, bool dirty_render) {
+void Graphics_init(Graphics* this, GraphicsDriver* driver, PixelFormat pixel_format, uint16_t background, Rotation rotation, bool dirty_render) {
   (this->_driver = driver);
-  (this->_strip0 = buffer0);
-  (this->_strip1 = buffer1);
+  (this->_strip0 = driver->strip0);
+  (this->_strip1 = driver->strip1);
   (this->_context.format = pixel_format);
   (this->_background = background);
   (this->_dirty_render = dirty_render);
-  if ((buffer1.size == 0)) {
+  if ((driver->strip1.size == 0)) {
     (this->_single_buffer = true);
   }
   (this->_render_window.x = 0);
@@ -489,6 +496,7 @@ void Graphics_render(Graphics* this) {
     (this->_front_buffer = (1 - this->_front_buffer));
     this->_driver->flush(this->_driver->handle, (&this->_context.viewpoint), Graphics__front_strip(this));
   }
+  this->_driver->frame_complete(this->_driver->handle);
   if (this->_dirty_render) {
     (this->_render_window.x = 0);
     (this->_render_window.y = 0);
@@ -607,29 +615,6 @@ static inline GpioLevel gpio__gpio_read(int32_t pin) {
   return ((GpioLevel)(gpio_get_level(pin)));
 }
 
-void Allocator_init(Allocator* this, __Slice_uint8_t mem) {
-  (this->_memory = mem);
-  (this->_cursor = 0);
-}
-
-static inline void* Allocator_allocate(Allocator* this, size_t __sizeof_T) {
-  uint64_t size = __sizeof_T;
-  if (((this->_cursor + size) > this->_memory.size)) {
-    return NULL;
-  }
-  void* ptr = (void*)((&this->_memory.ptr[this->_cursor]));
-  (this->_cursor = (((this->_cursor + size) + 3) & (~((int32_t)(3)))));
-  return ptr;
-}
-
-static inline int32_t Allocator_available(Allocator* this) {
-  return (this->_memory.size - this->_cursor);
-}
-
-static inline void Allocator_reset(Allocator* this) {
-  (this->_cursor = 0);
-}
-
 static inline int32_t math__floor_q16(int32_t value) {
   return (value & (-65536));
 }
@@ -670,42 +655,41 @@ void RenderContext_set_pixel(RenderContext* this, Point* point, uint16_t color) 
   if ((!Rect_contains((&this->viewpoint), point))) {
     return;
   }
-  int32_t px = (point->x - this->viewpoint.x);
-  int32_t py = (point->y - this->viewpoint.y);
   if ((this->format == PixelFormat_Mono)) {
-    RenderContext__set_pixel_mono(this, px, py, color);
+    RenderContext__set_pixel_mono(this, point, color);
   } else {
-    RenderContext__set_pixel_rgb565(this, px, py, color);
+    RenderContext__set_pixel_rgb565(this, point, color);
   }
 }
 
 void RenderContext_fill_rect(RenderContext* this, Rect* rect, uint16_t color) {
-  int32_t py = rect->y;
-  for (int32_t py = rect->y; py < (rect->y + rect->height); py++) {
-    if (((py >= this->viewpoint.y) && (py < (this->viewpoint.y + this->viewpoint.height)))) {
-      for (int32_t px = rect->x; px < (rect->x + rect->width); px++) {
+  Point point = {0};
+  for (int32_t y = rect->y; y < (rect->y + rect->height); y++) {
+    if (((y >= this->viewpoint.y) && (y < (this->viewpoint.y + this->viewpoint.height)))) {
+      for (int32_t x = rect->x; x < (rect->x + rect->width); x++) {
+        (point.x = x);
+        (point.y = y);
         if ((this->format == PixelFormat_Mono)) {
-          RenderContext__set_pixel_mono(this, px, (py - this->viewpoint.y), color);
+          RenderContext__set_pixel_mono(this, (&point), color);
         } else {
-          RenderContext__set_pixel_rgb565(this, px, (py - this->viewpoint.y), color);
+          RenderContext__set_pixel_rgb565(this, (&point), color);
         }
-        (px += 1);
       }
     }
   }
 }
 
-static inline void RenderContext__set_pixel_mono(RenderContext* this, int32_t x, int32_t y, uint16_t color) {
-  int32_t index = (((y * (this->viewpoint.width + 7)) / 8) + (x / 8));
+static inline void RenderContext__set_pixel_mono(RenderContext* this, Point* point, uint16_t color) {
+  int32_t index = ((point->y * ((this->viewpoint.width + 7) / 8)) + (point->x / 8));
   if ((color == 0)) {
-    (this->buffer.ptr[index] = (this->buffer.ptr[index] & ((uint8_t)((~(0x80 >> (x & 7)))))));
+    (this->buffer.ptr[index] = (this->buffer.ptr[index] & ((uint8_t)((~(0x80 >> (point->x & 7)))))));
   } else {
-    (this->buffer.ptr[index] = (this->buffer.ptr[index] | ((uint8_t)((0x80 >> (x & 7))))));
+    (this->buffer.ptr[index] = (this->buffer.ptr[index] | ((uint8_t)((0x80 >> (point->x & 7))))));
   }
 }
 
-static inline void RenderContext__set_pixel_rgb565(RenderContext* this, int32_t x, int32_t y, uint16_t color) {
-  int32_t index = (((y * this->viewpoint.width) + x) * 2);
+static inline void RenderContext__set_pixel_rgb565(RenderContext* this, Point* point, uint16_t color) {
+  int32_t index = (((point->y * this->viewpoint.width) + point->x) * 2);
   (this->buffer.ptr[index] = ((uint8_t)((color >> 8))));
   (this->buffer.ptr[(index + 1)] = ((uint8_t)(color)));
 }
