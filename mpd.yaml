@@ -1,8 +1,7 @@
-name: display
+name: image
 version: 0.1.0
 
 deps:
-  - git@github.com:panda-io/micro-panda-esp32.git@latest
   - git@github.com:panda-io/micro-panda-gfx.git@latest
 
 targets:
@@ -11,8 +10,8 @@ targets:
     src: src/
     test: test/
     type: bin
-    flags: [DEBUG, HOSTED]
+    flags: [RELEASE, HOSTED]
     output: bin/main
     cc:
       bin: gcc
-      flags: [-g, -O0, -Wall]
+      flags: [-g, -O2, -Wall]

@@ -1,4 +1,4 @@
-import display::*
-import drivers.ssd1306::*
+import console::*
 
 fun main()
+    print("Hello, world!")
