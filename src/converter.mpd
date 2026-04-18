@@ -58,7 +58,7 @@ fun _write_hex_u16(f: &file.File, v: u16)
 
 fun _write_int(f: &file.File, v: int)
     val n := string.format_int(_int_buf, v)
-    f.write_bytes({_int_buf.ptr, n})
+    f.write_bytes({&_int_buf[0], n})
 
 // ─── Nearest palette entry ───────────────────────────────────────────────────
 
@@ -396,7 +396,7 @@ fun _append_str(buf: byte[], pos: int, s: byte[]) int
 
 fun _append_int(buf: byte[], pos: int, v: int) int
     val n := string.format_int(_int_buf, v)
-    return _append_str(buf, pos, {_int_buf.ptr, n})
+    return _append_str(buf, pos, {&_int_buf[0], n})
 
 fun _default_path(base: byte[], bits: int, buf: byte[]) byte[]
     var p: int = 0
@@ -539,12 +539,12 @@ fun _process(raw_pixels: &byte, iw: int, ih: int, bits: int,
     var out_path_buf: byte[512]
 
     val base_len := _base_name(input_path, base_buf)
-    val base_s: byte[] = {base_buf.ptr, base_len}
+    val base_s: byte[] = {&base_buf[0], base_len}
     val ident_len := _to_ident(base_s, ident_buf)
 
     var final_name := name
     if name.size() == 0
-        final_name = {ident_buf.ptr, ident_len}
+        final_name = {&ident_buf[0], ident_len}
 
     var final_output := output
     if output.size() == 0
