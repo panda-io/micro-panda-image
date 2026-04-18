@@ -1,0 +1,412 @@
+import stb_image::stbi_load
+import stb_image::stbi_image_free
+
+#if HOSTED
+
+@raw('''
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <stdint.h>
+#include <limits.h>
+
+// stbi_load / stbi_image_free are defined earlier in the same TU by stb_image.mpd
+extern unsigned char *stbi_load(char const *filename, int *x, int *y, int *comp, int desired);
+extern void stbi_image_free(void *data);
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+typedef struct { unsigned char r, g, b; } PimgRGB;
+typedef struct { PimgRGB *start; int count; } PimgBucket;
+
+// ─── RGB565 conversion ───────────────────────────────────────────────────────
+
+static uint16_t _pimg_rgb565(unsigned char r, unsigned char g, unsigned char b) {
+    return (uint16_t)(((uint16_t)(r >> 3) << 11) | ((uint16_t)(g >> 2) << 5) | (uint16_t)(b >> 3));
+}
+
+// ─── Nearest-color lookup (Euclidean distance squared) ───────────────────────
+
+static int _pimg_nearest(unsigned char r, unsigned char g, unsigned char b,
+                         PimgRGB *pal, int size) {
+    int best = 0, best_d = INT_MAX;
+    for (int i = 0; i < size; i++) {
+        int dr = (int)r - (int)pal[i].r;
+        int dg = (int)g - (int)pal[i].g;
+        int db = (int)b - (int)pal[i].b;
+        int d = dr*dr + dg*dg + db*db;
+        if (d < best_d) { best_d = d; best = i; }
+    }
+    return best;
+}
+
+// ─── Median-cut palette generation ───────────────────────────────────────────
+
+static int _pimg_cmp_r(const void *a, const void *b) {
+    return (int)((PimgRGB*)a)->r - (int)((PimgRGB*)b)->r;
+}
+static int _pimg_cmp_g(const void *a, const void *b) {
+    return (int)((PimgRGB*)a)->g - (int)((PimgRGB*)b)->g;
+}
+static int _pimg_cmp_b(const void *a, const void *b) {
+    return (int)((PimgRGB*)a)->b - (int)((PimgRGB*)b)->b;
+}
+
+static void _pimg_median_cut(PimgRGB *pixels, int count,
+                              PimgRGB *palette, int pal_size) {
+    PimgBucket *bkts = (PimgBucket*)malloc((size_t)pal_size * sizeof(PimgBucket));
+    if (!bkts) return;
+    bkts[0].start = pixels;
+    bkts[0].count = count;
+    int n = 1;
+
+    while (n < pal_size) {
+        int si = 0;
+        for (int i = 1; i < n; i++)
+            if (bkts[i].count > bkts[si].count) si = i;
+
+        PimgBucket *b = &bkts[si];
+        if (b->count <= 1) break;
+
+        unsigned char mn_r=255,mx_r=0,mn_g=255,mx_g=0,mn_b=255,mx_b=0;
+        for (int i = 0; i < b->count; i++) {
+            PimgRGB *p = &b->start[i];
+            if (p->r < mn_r) mn_r = p->r;  if (p->r > mx_r) mx_r = p->r;
+            if (p->g < mn_g) mn_g = p->g;  if (p->g > mx_g) mx_g = p->g;
+            if (p->b < mn_b) mn_b = p->b;  if (p->b > mx_b) mx_b = p->b;
+        }
+        int rr = mx_r-mn_r, rg = mx_g-mn_g, rb = mx_b-mn_b;
+        if (rr >= rg && rr >= rb)
+            qsort(b->start, (size_t)b->count, sizeof(PimgRGB), _pimg_cmp_r);
+        else if (rg >= rr && rg >= rb)
+            qsort(b->start, (size_t)b->count, sizeof(PimgRGB), _pimg_cmp_g);
+        else
+            qsort(b->start, (size_t)b->count, sizeof(PimgRGB), _pimg_cmp_b);
+
+        int mid = b->count / 2;
+        bkts[n].start = b->start + mid;
+        bkts[n].count = b->count - mid;
+        b->count = mid;
+        n++;
+    }
+
+    for (int i = 0; i < n; i++) {
+        if (bkts[i].count == 0) { palette[i].r=palette[i].g=palette[i].b=0; continue; }
+        unsigned long long sr=0, sg=0, sb=0;
+        for (int j = 0; j < bkts[i].count; j++) {
+            sr += bkts[i].start[j].r;
+            sg += bkts[i].start[j].g;
+            sb += bkts[i].start[j].b;
+        }
+        int c = bkts[i].count;
+        palette[i].r = (unsigned char)(sr / (unsigned long long)c);
+        palette[i].g = (unsigned char)(sg / (unsigned long long)c);
+        palette[i].b = (unsigned char)(sb / (unsigned long long)c);
+    }
+    for (int i = n; i < pal_size; i++)
+        palette[i].r = palette[i].g = palette[i].b = 0;
+
+    free(bkts);
+}
+
+// ─── Pixel packing — matches gfx canvas.mpd bit layout exactly ───────────────
+//
+//  Index1: MSB=x0, row stride = (w+7)/8 bytes
+//  Index2: bits[7:6]=x0, bits[5:4]=x1..., row stride = (w+3)/4 bytes
+//  Index4: high nibble=x(even), low nibble=x(odd), row stride = (w+1)/2 bytes
+//  Index8: one byte per pixel, row stride = w bytes
+
+static void _pimg_pack(const unsigned char *idx, int w, int h, int bits,
+                       unsigned char *out) {
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) {
+            unsigned char ci = idx[y * w + x];
+            if (bits == 1) {
+                int bi = y * ((w + 7) / 8) + x / 8;
+                int sh = 7 - (x & 7);
+                if (ci & 1) out[bi] |= (unsigned char)(1u << sh);
+            } else if (bits == 2) {
+                int bi = y * ((w + 3) / 4) + x / 4;
+                int sh = (3 - (x & 3)) * 2;
+                out[bi] = (unsigned char)((out[bi] & ~(0x03 << sh)) | ((ci & 0x03) << sh));
+            } else if (bits == 4) {
+                int bi = y * ((w + 1) / 2) + x / 2;
+                if ((x & 1) == 0)
+                    out[bi] = (unsigned char)((out[bi] & 0x0F) | ((ci & 0x0F) << 4));
+                else
+                    out[bi] = (unsigned char)((out[bi] & 0xF0) | (ci & 0x0F));
+            } else {
+                out[y * w + x] = ci;
+            }
+        }
+    }
+}
+
+// ─── Minimal PNG writer for palette output ────────────────────────────────────
+//  Writes a 1-row RGB PNG using uncompressed (stored) deflate.
+
+static uint32_t _pcrc_tbl[256];
+static int _pcrc_ready = 0;
+
+static void _pcrc_init(void) {
+    if (_pcrc_ready) return;
+    for (int i = 0; i < 256; i++) {
+        uint32_t c = (uint32_t)i;
+        for (int j = 0; j < 8; j++)
+            c = (c & 1) ? (0xEDB88320u ^ (c >> 1)) : (c >> 1);
+        _pcrc_tbl[i] = c;
+    }
+    _pcrc_ready = 1;
+}
+
+static uint32_t _padler32(const uint8_t *d, size_t len) {
+    uint32_t s1 = 1, s2 = 0;
+    while (len--) { s1 = (s1 + *d++) % 65521u; s2 = (s2 + s1) % 65521u; }
+    return (s2 << 16) | s1;
+}
+
+static void _pu32be(FILE *f, uint32_t v) {
+    uint8_t b[4] = {(uint8_t)(v>>24),(uint8_t)(v>>16),(uint8_t)(v>>8),(uint8_t)v};
+    fwrite(b, 1, 4, f);
+}
+
+static void _pchunk(FILE *f, const char *type, const uint8_t *data, uint32_t len) {
+    _pu32be(f, len);
+    fwrite(type, 1, 4, f);
+    if (data && len) fwrite(data, 1, len, f);
+    _pcrc_init();
+    uint32_t crc = 0xFFFFFFFFu;
+    for (int i = 0; i < 4; i++)
+        crc = _pcrc_tbl[(crc ^ (uint8_t)type[i]) & 0xFF] ^ (crc >> 8);
+    if (data)
+        for (uint32_t i = 0; i < len; i++)
+            crc = _pcrc_tbl[(crc ^ data[i]) & 0xFF] ^ (crc >> 8);
+    _pu32be(f, crc ^ 0xFFFFFFFFu);
+}
+
+static int _pimg_write_pal_png(const char *path, const uint8_t *rgb, int n) {
+    FILE *f = fopen(path, "wb");
+    if (!f) return 0;
+
+    static const uint8_t sig[8] = {137,80,78,71,13,10,26,10};
+    fwrite(sig, 1, 8, f);
+
+    uint8_t ihdr[13];
+    uint32_t w = (uint32_t)n;
+    ihdr[0]=(uint8_t)(w>>24); ihdr[1]=(uint8_t)(w>>16);
+    ihdr[2]=(uint8_t)(w>>8);  ihdr[3]=(uint8_t)w;
+    ihdr[4]=0; ihdr[5]=0; ihdr[6]=0; ihdr[7]=1; // height=1
+    ihdr[8]=8; ihdr[9]=2; ihdr[10]=0; ihdr[11]=0; ihdr[12]=0;
+    _pchunk(f, "IHDR", ihdr, 13);
+
+    // Scanline: filter(0) + N*3 bytes of RGB
+    int scan_len = 1 + n * 3;
+    uint8_t *scan = (uint8_t*)malloc((size_t)scan_len);
+    if (!scan) { fclose(f); return 0; }
+    scan[0] = 0;
+    memcpy(scan + 1, rgb, (size_t)(n * 3));
+
+    uint32_t adler = _padler32(scan, (size_t)scan_len);
+
+    // zlib stored block: CMF FLG | BFINAL BTYPE LEN ~LEN data | adler32
+    int zlen = 2 + 5 + scan_len + 4;
+    uint8_t *zlib = (uint8_t*)malloc((size_t)zlen);
+    if (!zlib) { free(scan); fclose(f); return 0; }
+    int zi = 0;
+    zlib[zi++]=0x78; zlib[zi++]=0x01; // zlib header (0x7801 % 31 == 0)
+    zlib[zi++]=0x01;                   // BFINAL=1, BTYPE=00 (stored)
+    uint16_t blen = (uint16_t)scan_len;
+    zlib[zi++]=(uint8_t)blen; zlib[zi++]=(uint8_t)(blen>>8);
+    uint16_t nlen = (uint16_t)~blen;
+    zlib[zi++]=(uint8_t)nlen; zlib[zi++]=(uint8_t)(nlen>>8);
+    memcpy(zlib+zi, scan, (size_t)scan_len); zi += scan_len;
+    zlib[zi++]=(uint8_t)(adler>>24); zlib[zi++]=(uint8_t)(adler>>16);
+    zlib[zi++]=(uint8_t)(adler>>8);  zlib[zi++]=(uint8_t)adler;
+
+    _pchunk(f, "IDAT", zlib, (uint32_t)zlen);
+    free(zlib); free(scan);
+    _pchunk(f, "IEND", NULL, 0);
+    fclose(f);
+    return 1;
+}
+
+// ─── Filename utilities ───────────────────────────────────────────────────────
+
+static void _pimg_base_name(const char *path, char *out, int max) {
+    const char *s = strrchr(path, '/');
+    if (!s) s = strrchr(path, '\\');
+    s = s ? s + 1 : path;
+    strncpy(out, s, (size_t)(max - 1));
+    out[max - 1] = '\0';
+    char *dot = strrchr(out, '.');
+    if (dot) *dot = '\0';
+}
+
+static void _pimg_to_ident(const char *in, char *out, int max) {
+    int j = 0;
+    for (int i = 0; in[i] && j < max - 1; i++) {
+        char c = in[i];
+        int alpha = (c>='a'&&c<='z') || (c>='A'&&c<='Z');
+        int digit = (c>='0'&&c<='9');
+        if (alpha || (digit && j > 0)) {
+            out[j++] = c;
+        } else if (j > 0 && out[j-1] != '_') {
+            out[j++] = '_';
+        }
+    }
+    while (j > 0 && out[j-1] == '_') j--;
+    out[j] = '\0';
+    if (j == 0) strcpy(out, "img");
+}
+
+// ─── MPD code generator ───────────────────────────────────────────────────────
+
+static void _pimg_write_mpd(FILE *f, const char *name, int w, int h, int bits,
+                             PimgRGB *pal, int pal_size,
+                             const unsigned char *data, int data_size) {
+    static const char *fmts[4] = {"Index1","Index2","Index4","Index8"};
+    const char *fmt = fmts[(bits==1)?0:(bits==2)?1:(bits==4)?2:3];
+
+    fprintf(f, "// Generated by pimg — do not edit\n");
+    fprintf(f, "// %dx%d  %d-bit  %d colors\n\n", w, h, bits, pal_size);
+    fprintf(f, "import graphics::IndexFormat\n\n");
+
+    // Palette — val → RAM for hot-path pixel rendering
+    fprintf(f, "val %s_palette: u16[%d] = [\n", name, pal_size);
+    for (int i = 0; i < pal_size; i++) {
+        uint16_t c = _pimg_rgb565(pal[i].r, pal[i].g, pal[i].b);
+        fprintf(f, "    0x%04X,  // %3d  rgb(%3d,%3d,%3d)\n",
+                c, i, pal[i].r, pal[i].g, pal[i].b);
+    }
+    fprintf(f, "]\n\n");
+
+    // Pixel data — const → flash on MCU
+    fprintf(f, "const %s_data: byte[%d] = [\n", name, data_size);
+    for (int i = 0; i < data_size; i++) {
+        if (i % 16 == 0) fprintf(f, "    ");
+        fprintf(f, "0x%02X", data[i]);
+        if (i < data_size - 1) fprintf(f, ", ");
+        if ((i + 1) % 16 == 0 || i == data_size - 1) fprintf(f, "\n");
+    }
+    fprintf(f, "]\n\n");
+
+    fprintf(f, "const %s_width:  int = %d\n", name, w);
+    fprintf(f, "const %s_height: int = %d\n", name, h);
+    fprintf(f, "val   %s_format: IndexFormat = IndexFormat.%s\n", name, fmt);
+}
+
+// ─── pimg_process — core conversion (receives pre-loaded pixel data) ──────────
+
+static int pimg_process(const uint8_t *pixels, int iw, int ih, int bits,
+                        const char *input_path, const char *pal_path,
+                        const char *out_pal, const char *output, const char *name) {
+    int pixel_count = iw * ih;
+    int pal_size = 1 << bits;
+    PimgRGB palette[256];
+
+    if (pal_path && pal_path[0]) {
+        // Load palette from a 1-pixel-high PNG (width = color count)
+        int pw, ph, pc;
+        unsigned char *pd = stbi_load(pal_path, &pw, &ph, &pc, 3);
+        if (!pd) {
+            fprintf(stderr, "pimg: cannot load palette '%s'\n", pal_path);
+            return 0;
+        }
+        int n = pw < pal_size ? pw : pal_size;
+        for (int i = 0; i < n; i++) {
+            palette[i].r = pd[i*3];
+            palette[i].g = pd[i*3+1];
+            palette[i].b = pd[i*3+2];
+        }
+        for (int i = n; i < pal_size; i++)
+            palette[i].r = palette[i].g = palette[i].b = 0;
+        stbi_image_free(pd);
+    } else {
+        // Auto-generate palette with median cut
+        PimgRGB *tmp = (PimgRGB*)malloc((size_t)pixel_count * sizeof(PimgRGB));
+        if (!tmp) return 0;
+        for (int i = 0; i < pixel_count; i++) {
+            tmp[i].r = pixels[i*3];
+            tmp[i].g = pixels[i*3+1];
+            tmp[i].b = pixels[i*3+2];
+        }
+        _pimg_median_cut(tmp, pixel_count, palette, pal_size);
+        free(tmp);
+    }
+
+    // Map each pixel to nearest palette index
+    unsigned char *idx = (unsigned char*)malloc((size_t)pixel_count);
+    if (!idx) return 0;
+    for (int i = 0; i < pixel_count; i++)
+        idx[i] = (unsigned char)_pimg_nearest(
+            pixels[i*3], pixels[i*3+1], pixels[i*3+2], palette, pal_size);
+
+    // Pack indices into bit-depth format (matching canvas.mpd layout)
+    int bpr = (bits==1) ? (iw+7)/8 : (bits==2) ? (iw+3)/4 : (bits==4) ? (iw+1)/2 : iw;
+    int packed_size = bpr * ih;
+    unsigned char *packed = (unsigned char*)calloc((size_t)packed_size, 1);
+    if (!packed) { free(idx); return 0; }
+    _pimg_pack(idx, iw, ih, bits, packed);
+    free(idx);
+
+    // Resolve output path and variable name from input path
+    char base[256], ident[256];
+    _pimg_base_name(input_path, base, 256);
+    _pimg_to_ident(base, ident, 256);
+    const char *final_name = (name && name[0]) ? name : ident;
+
+    char def_out[512];
+    if (!output || !output[0]) {
+        snprintf(def_out, 512, "%s_%dbit.mpd", base, bits);
+        output = def_out;
+    }
+
+    // Write MPD source file
+    FILE *of = fopen(output, "w");
+    int ok = 0;
+    if (!of) {
+        fprintf(stderr, "pimg: cannot write '%s'\n", output);
+    } else {
+        _pimg_write_mpd(of, final_name, iw, ih, bits,
+                        palette, pal_size, packed, packed_size);
+        fclose(of);
+        printf("pimg: wrote '%s' (%dx%d, %d-bit, %d bytes data)\n",
+               output, iw, ih, bits, packed_size);
+        ok = 1;
+    }
+
+    // Optionally write generated palette as PNG
+    if (ok && out_pal && out_pal[0]) {
+        uint8_t pal_rgb[256 * 3];
+        for (int i = 0; i < pal_size; i++) {
+            pal_rgb[i*3]   = palette[i].r;
+            pal_rgb[i*3+1] = palette[i].g;
+            pal_rgb[i*3+2] = palette[i].b;
+        }
+        if (_pimg_write_pal_png(out_pal, pal_rgb, pal_size))
+            printf("pimg: wrote palette '%s'\n", out_pal);
+        else
+            fprintf(stderr, "pimg: failed to write palette '%s'\n", out_pal);
+    }
+
+    free(packed);
+    return ok;
+}
+''')
+
+@extern("pimg_process((uint8_t*){pixels}, {iw}, {ih}, {bits}, (const char*){input}.ptr, (const char*){pal}.ptr, (const char*){out_pal}.ptr, (const char*){output}.ptr, (const char*){name}.ptr)")
+fun _process(pixels: &byte, iw: int, ih: int, bits: int, input: byte[], pal: byte[], out_pal: byte[], output: byte[], name: byte[]): int
+
+// Load image, run conversion, free image data
+fun convert(input: byte[], bits: int, pal: byte[], out_pal: byte[], output: byte[], name: byte[]): int
+    var iw: int = 0
+    var ih: int = 0
+    var ic: int = 0
+    val pixels := stbi_load(input, &iw, &ih, &ic, 3)
+    if pixels == null
+        return 0
+    val ok := _process(pixels, iw, ih, bits, input, pal, out_pal, output, name)
+    stbi_image_free(pixels)
+    return ok
+
+#end

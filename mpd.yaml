@@ -11,7 +11,7 @@ targets:
     test: test/
     type: bin
     flags: [RELEASE, HOSTED]
-    output: bin/main
+    output: bin/pimg
     cc:
       bin: gcc
       flags: [-g, -O2, -Wall]

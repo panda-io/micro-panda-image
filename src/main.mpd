@@ -1,4 +1,58 @@
-import console::*
+import console
+import string::equals
+import string::parse_u32
+import hosted.args::arg_count
+import hosted.args::arg_value
+import image_converter::convert
 
 fun main()
-    print("Hello, world!")
+    if arg_count() < 2
+        _print_usage()
+        return
+
+    val input := arg_value(1)
+    var bits: int = 8
+    var palette: byte[] = ""
+    var out_palette: byte[] = ""
+    var output: byte[] = ""
+    var name: byte[] = ""
+
+    var i: int = 2
+    while i < arg_count()
+        val arg := arg_value(i)
+        if equals(arg, "--bits") && i + 1 < arg_count()
+            i += 1
+            bits = int(parse_u32(arg_value(i)))
+        else if equals(arg, "--palette") && i + 1 < arg_count()
+            i += 1
+            palette = arg_value(i)
+        else if equals(arg, "--out-palette") && i + 1 < arg_count()
+            i += 1
+            out_palette = arg_value(i)
+        else if equals(arg, "--output") && i + 1 < arg_count()
+            i += 1
+            output = arg_value(i)
+        else if equals(arg, "--name") && i + 1 < arg_count()
+            i += 1
+            name = arg_value(i)
+        i += 1
+
+    if bits != 1 && bits != 2 && bits != 4 && bits != 8
+        console.print("Error: --bits must be 1, 2, 4, or 8")
+        return
+
+    val ok := convert(input, bits, palette, out_palette, output, name)
+    if ok == 0
+        console.print("Error: conversion failed")
+
+fun _print_usage()
+    console.print("pimg — Panda Image Converter")
+    console.print("Usage: pimg <input.png|jpg> [options]")
+    console.print("")
+    console.print("Options:")
+    console.print("  --bits 1|2|4|8         color depth (default: 8)")
+    console.print("                         1=2 colors  2=4 colors  4=16 colors  8=256 colors")
+    console.print("  --palette file.png     use specified palette (1px high, width=color count)")
+    console.print("  --out-palette file.png save auto-generated palette as PNG")
+    console.print("  --output file.mpd      output file (default: <name>_<bits>bit.mpd)")
+    console.print("  --name varname         variable name prefix in generated code")
