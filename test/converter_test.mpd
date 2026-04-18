@@ -1,0 +1,142 @@
+import stb_image
+import converter::convert
+import hosted.file
+import test
+
+#if HOSTED
+
+val _f: file.File
+val _check_f: file.File
+
+// Writes a minimal valid 1x1 red-pixel (255,0,0) RGB PNG to path.
+fun _write_1x1_red(path: byte[]) bool
+    var d: byte[72]
+    // PNG signature
+    d[0]  = byte(0x89)
+    d[1]  = byte(0x50)
+    d[2]  = byte(0x4E)
+    d[3]  = byte(0x47)
+    d[4]  = byte(0x0D)
+    d[5]  = byte(0x0A)
+    d[6]  = byte(0x1A)
+    d[7]  = byte(0x0A)
+    // IHDR chunk (1x1, 8-bit RGB)
+    d[8]  = 0
+    d[9]  = 0
+    d[10] = 0
+    d[11] = byte(0x0D)
+    d[12] = byte(0x49)
+    d[13] = byte(0x48)
+    d[14] = byte(0x44)
+    d[15] = byte(0x52)
+    d[16] = 0
+    d[17] = 0
+    d[18] = 0
+    d[19] = 1
+    d[20] = 0
+    d[21] = 0
+    d[22] = 0
+    d[23] = 1
+    d[24] = 8
+    d[25] = 2
+    d[26] = 0
+    d[27] = 0
+    d[28] = 0
+    d[29] = byte(0x90)
+    d[30] = byte(0x77)
+    d[31] = byte(0x53)
+    d[32] = byte(0xDE)
+    // IDAT chunk (stored block, filter=0, R=255 G=0 B=0)
+    d[33] = 0
+    d[34] = 0
+    d[35] = 0
+    d[36] = byte(0x0F)
+    d[37] = byte(0x49)
+    d[38] = byte(0x44)
+    d[39] = byte(0x41)
+    d[40] = byte(0x54)
+    d[41] = byte(0x78)
+    d[42] = 1
+    d[43] = 1
+    d[44] = 4
+    d[45] = 0
+    d[46] = byte(0xFB)
+    d[47] = byte(0xFF)
+    d[48] = 0
+    d[49] = byte(0xFF)
+    d[50] = 0
+    d[51] = 0
+    d[52] = 3
+    d[53] = 1
+    d[54] = 1
+    d[55] = 0
+    d[56] = byte(0x8D)
+    d[57] = byte(0x1D)
+    d[58] = byte(0xE5)
+    d[59] = byte(0x82)
+    // IEND chunk
+    d[60] = 0
+    d[61] = 0
+    d[62] = 0
+    d[63] = 0
+    d[64] = byte(0x49)
+    d[65] = byte(0x45)
+    d[66] = byte(0x4E)
+    d[67] = byte(0x44)
+    d[68] = byte(0xAE)
+    d[69] = byte(0x42)
+    d[70] = byte(0x60)
+    d[71] = byte(0x82)
+    if !_f.open(path, file.WRITE)
+        return false
+    _f.write_bytes(d)
+    _f.close()
+    return true
+
+fun _file_exists(path: byte[]) bool
+    val ok := _check_f.open(path, file.READ)
+    if ok
+        _check_f.close()
+    return ok
+
+@test
+fun test_convert_invalid_input()
+    val r := convert("/nonexistent/path/test.png", 8, "", "", "/tmp/pimg_out_invalid.mpd", "test")
+    assert(r == 0)
+
+@test
+fun test_convert_1bit()
+    assert(_write_1x1_red("/tmp/pimg_test_in.png"))
+    val r := convert("/tmp/pimg_test_in.png", 1, "", "", "/tmp/pimg_out_1bit.mpd", "img")
+    assert(r == 1)
+    assert(_file_exists("/tmp/pimg_out_1bit.mpd"))
+
+@test
+fun test_convert_2bit()
+    assert(_write_1x1_red("/tmp/pimg_test_in.png"))
+    val r := convert("/tmp/pimg_test_in.png", 2, "", "", "/tmp/pimg_out_2bit.mpd", "img")
+    assert(r == 1)
+    assert(_file_exists("/tmp/pimg_out_2bit.mpd"))
+
+@test
+fun test_convert_4bit()
+    assert(_write_1x1_red("/tmp/pimg_test_in.png"))
+    val r := convert("/tmp/pimg_test_in.png", 4, "", "", "/tmp/pimg_out_4bit.mpd", "img")
+    assert(r == 1)
+    assert(_file_exists("/tmp/pimg_out_4bit.mpd"))
+
+@test
+fun test_convert_8bit()
+    assert(_write_1x1_red("/tmp/pimg_test_in.png"))
+    val r := convert("/tmp/pimg_test_in.png", 8, "", "", "/tmp/pimg_out_8bit.mpd", "img")
+    assert(r == 1)
+    assert(_file_exists("/tmp/pimg_out_8bit.mpd"))
+
+@test
+fun test_convert_palette_output()
+    assert(_write_1x1_red("/tmp/pimg_test_in.png"))
+    val r := convert("/tmp/pimg_test_in.png", 4, "", "/tmp/pimg_pal_out.png", "/tmp/pimg_out_pal.mpd", "img")
+    assert(r == 1)
+    assert(_file_exists("/tmp/pimg_pal_out.png"))
+
+#end
