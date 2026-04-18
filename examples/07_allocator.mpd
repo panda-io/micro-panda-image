@@ -1,0 +1,110 @@
+// Demonstrates: arena Allocator (MCU32 + HOSTED), ArrayList, RingBuffer,
+//               and HOSTED-only HeapAllocator + HeapList
+import console
+import mcu32.allocator::Allocator
+import mcu32.collection::ArrayList
+import mcu32.collection::RingBuffer
+
+// ── Arena allocator ───────────────────────────────────────────────────────────
+// Backed by a static byte buffer. Works on MCU32 and HOSTED.
+// reset() frees all allocations at once (O(1)) — no per-object free.
+
+var _arena_mem: byte[4096]
+val _arena: Allocator
+
+val _int_list: ArrayList<i32>
+val _ring: RingBuffer<i32>
+
+fun demo_arena()
+    _arena.init(_arena_mem)
+
+    // ArrayList — fixed capacity, backed by arena
+    _int_list.init(&_arena, 8)
+    _int_list.push(10)
+    _int_list.push(20)
+    _int_list.push(30)
+
+    console.write_string("list size=")
+    console.write_i32(_int_list.size())
+    console.write_byte(10)
+
+    for i in 0.._int_list.size()
+        console.write_i32(_int_list.get(i))
+        console.write_byte(' ')
+    console.write_byte(10)
+
+    _int_list.pop()
+    console.write_string("after pop: ")
+    console.write_i32(_int_list.size())
+    console.write_byte(10)
+
+    // RingBuffer — FIFO circular buffer
+    _ring.init(&_arena, 4)
+    _ring.push(1)
+    _ring.push(2)
+    _ring.push(3)
+
+    console.write_string("ring: ")
+    while !_ring.is_empty()
+        console.write_i32(_ring.peek())
+        console.write_byte(' ')
+        _ring.pop()
+    console.write_byte(10)
+
+    // Arena reset — reclaim all memory at once
+    _arena.reset()
+    console.write_string("available after reset: ")
+    console.write_i32(_arena.available())
+    console.write_byte(10)
+
+// ── HeapAllocator + HeapList (HOSTED only) ────────────────────────────────────
+#if HOSTED
+import hosted.allocator::HeapAllocator
+import hosted.collection::HeapList
+import hosted.collection::HeapMap
+
+val _heap: HeapAllocator
+val _heap_list: HeapList<i32>
+val _map: HeapMap<i32>
+
+fun demo_heap()
+    // HeapList — growable, backed by malloc; auto-resizes on push
+    _heap_list.init(&_heap)
+    for i in 0..10
+        _heap_list.push(i * i)
+
+    console.write_string("heap list: ")
+    for i in 0.._heap_list.size()
+        console.write_i32(_heap_list.get(i))
+        console.write_byte(' ')
+    console.write_byte(10)
+
+    _heap_list.free()
+
+    // HeapMap — string-keyed hash map
+    _map.init(&_heap)
+    _map.set("alpha", 1)
+    _map.set("beta", 2)
+    _map.set("gamma", 3)
+
+    console.write_string("alpha=")
+    console.write_i32(_map.get("alpha"))
+    console.write_byte(10)
+
+    console.write_string("has beta: ")
+    console.write_bool(_map.contains("beta"))
+    console.write_byte(10)
+
+    _map.remove("beta")
+    console.write_string("has beta after remove: ")
+    console.write_bool(_map.contains("beta"))
+    console.write_byte(10)
+
+    _map.free()
+#end
+
+fun main()
+    demo_arena()
+#if HOSTED
+    demo_heap()
+#end

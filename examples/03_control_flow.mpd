@@ -1,0 +1,96 @@
+// Demonstrates: if/else, while, for range, for-in, reference for-in, match
+import console
+
+enum Direction
+    North
+    South
+    East
+    West
+
+enum Token
+    Word(start: i32, len: i32)
+    Number(value: i32)
+    End
+
+fun describe_token(t: &Token) u8[]
+    match t
+        Word(s, l):
+            return "word"
+        Number(v):
+            return "number"
+        End:
+            return "end"
+
+var _tok: Token
+
+fun main()
+    // if / else if / else
+    var score := 72
+    if score >= 90
+        console.print("A")
+    else if score >= 70
+        console.print("B")
+    else
+        console.print("C")
+
+    // while with break
+    var n := 1
+    while n < 100
+        if n > 10
+            break
+        n *= 2
+    console.write_i32(n)
+    console.write_byte(10)
+
+    // for range [0, 5)
+    for i in 0..5
+        console.write_i32(i)
+        console.write_byte(' ')
+    console.write_byte(10)
+
+    // for-in array (by value)
+    var temps := [22, 19, 25, 18, 21]
+    var sum := 0
+    for t in temps
+        sum += t
+    console.write_i32(sum / temps.size())
+    console.write_byte(10)
+
+    // for-in with index
+    var labels: u8[][3]
+    labels[0] = "foo"
+    labels[1] = "bar"
+    labels[2] = "baz"
+    for i, label in labels
+        console.write_i32(i)
+        console.write_byte(':')
+        console.write_string(label)
+        console.write_byte(10)
+
+    // reference for-in — mutate in place
+    var data: i32[4] = [1, 2, 3, 4]
+    for &item in data
+        item *= 10
+    for v in data
+        console.write_i32(v)
+        console.write_byte(' ')
+    console.write_byte(10)
+
+    // match on plain enum
+    var dir: Direction = Direction.East
+    match dir
+        Direction.North:
+            console.print("north")
+        Direction.South:
+            console.print("south")
+        Direction.East:
+            console.print("east")
+        Direction.West:
+            console.print("west")
+
+    // match on tagged enum
+    _tok = Token.Number(42)
+    console.print(describe_token(&_tok))
+
+    _tok = Token.Word(0, 5)
+    console.print(describe_token(&_tok))

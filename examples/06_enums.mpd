@@ -1,0 +1,95 @@
+// Demonstrates: plain enum, value enum, tagged enum, match destructuring
+import console
+
+// Plain enum — auto values starting at 0
+enum Color
+    Red      // 0
+    Green    // 1
+    Blue     // 2
+
+fun color_name(c: Color) u8[]
+    match c
+        Color.Red:
+            return "red"
+        Color.Green:
+            return "green"
+        Color.Blue:
+            return "blue"
+        _:
+            return "unknown"
+
+// Value enum — explicit integer values
+enum HttpStatus
+    Ok       = 200
+    NotFound = 404
+    Error    = 500
+
+fun is_success(s: HttpStatus) bool
+    match s
+        HttpStatus.Ok:
+            return true
+        _:
+            return false
+
+// Tagged enum — variants carry data
+// Use &T fields for recursive types (keeps struct size fixed)
+enum Expr
+    Num(value: i32)
+    Add(left: &Expr, right: &Expr)
+    Mul(left: &Expr, right: &Expr)
+    Neg(inner: &Expr)
+
+fun eval(e: &Expr) i32
+    match e
+        Num(v):
+            return v
+        Add(l, r):
+            return eval(l) + eval(r)
+        Mul(l, r):
+            return eval(l) * eval(r)
+        Neg(x):
+            return -eval(x)
+
+// Global Expr nodes — tagged enum instances need global scope
+// (or allocator inside functions)
+var _a: Expr
+var _b: Expr
+var _c: Expr
+var _d: Expr
+var _e: Expr
+
+fun main()
+    // plain enum
+    var c: Color = Color.Green
+    console.print(color_name(c))
+
+    // iterate all values by index
+    for i in 0..3
+        // match on integer to simulate enum iteration
+        match i
+            0:
+                console.print(color_name(Color.Red))
+            1:
+                console.print(color_name(Color.Green))
+            2:
+                console.print(color_name(Color.Blue))
+
+    // value enum
+    var status: HttpStatus = HttpStatus.Ok
+    console.write_bool(is_success(status))
+    console.write_byte(10)
+
+    status = HttpStatus.NotFound
+    console.write_bool(is_success(status))
+    console.write_byte(10)
+
+    // tagged enum — build expression: -(3 + 4) * 2
+    _a = Expr.Num(3)
+    _b = Expr.Num(4)
+    _c = Expr.Add(&_a, &_b)     // 3 + 4 = 7
+    _d = Expr.Neg(&_c)           // -(7) = -7
+    _e = Expr.Num(2)
+
+    val sum_node: Expr = Expr.Mul(&_d, &_e)  // -7 * 2 = -14
+    console.write_i32(eval(&sum_node))
+    console.write_byte(10)

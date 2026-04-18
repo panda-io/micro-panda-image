@@ -1,0 +1,4 @@
+import console
+
+fun main()
+    console.print("Hello, world!")

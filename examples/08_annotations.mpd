@@ -1,0 +1,75 @@
+// Demonstrates: @extern, @raw, @inline, @test, assert, #if preprocessor
+// This file is a test file — run with: mpd test
+import console
+import test::assert
+
+// ── @raw — include C headers verbatim ─────────────────────────────────────────
+@raw("#include <math.h>")
+@raw("#include <string.h>")
+
+// ── @extern — map to C expression or function ─────────────────────────────────
+
+// Simple C rename — call site emits cbrt(x)
+@extern("cbrtf({x})")
+fun cube_root(x: float) float
+
+// Template with named placeholder — {param} replaced at call site
+@extern("((int32_t)strlen({s}.ptr))")
+fun c_strlen(s: u8[]) i32
+
+// Multi-statement extern (GCC statement expression)
+@extern('''({
+    double _r = (double){x} * (double){x};
+    (float)_r;
+})''')
+fun precise_square(x: float) float
+
+// ── @inline — emits static inline; slightly faster for hot paths ──────────────
+
+@inline
+fun clamp_byte(v: i32) u8
+    if v < 0
+        return 0
+    if v > 255
+        return 255
+    return u8(v)
+
+// ── Preprocessor #if / #else / #end ──────────────────────────────────────────
+
+#if HOSTED
+fun platform_name() u8[]
+    return "hosted"
+#else
+fun platform_name() u8[]
+    return "embedded"
+#end
+
+// ── @test — collected by `mpd test` ──────────────────────────────────────────
+// assert(expr) aborts with file + line if false.
+
+@test
+fun test_extern_strlen()
+    val s: u8[] = "hello"
+    assert(c_strlen(s) == 5)
+
+@test
+fun test_cube_root()
+    val r := cube_root(27.0)
+    // float precision: check within tolerance
+    val diff := r - 3.0
+    if diff < 0.0
+        assert(-diff < 0.01)
+    else
+        assert(diff < 0.01)
+
+@test
+fun test_clamp_byte()
+    assert(clamp_byte(-1) == 0)
+    assert(clamp_byte(128) == 128)
+    assert(clamp_byte(300) == 255)
+
+@test
+fun test_preprocessor()
+    val name := platform_name()
+    // just verify it returns a non-empty string
+    assert(name.size() > 0)

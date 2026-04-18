@@ -1,0 +1,17 @@
+// Demonstrates: console output, strings, basic program structure
+import console
+
+fun main()
+    console.print("Hello, Micro Panda!")
+
+    console.write_string("answer: ")
+    console.write_i32(42)
+    console.write_byte(10)
+
+    console.write_string("pi: ")
+    console.write_float(3.14159)
+    console.write_byte(10)
+
+    console.write_string("flag: ")
+    console.write_bool(true)
+    console.write_byte(10)

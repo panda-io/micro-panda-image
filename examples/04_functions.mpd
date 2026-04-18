@@ -1,0 +1,74 @@
+// Demonstrates: functions, generics, @inline, function references, callbacks
+import console
+
+fun add(a: i32, b: i32) i32
+    return a + b
+
+fun factorial(n: i32) i32
+    if n <= 1
+        return 1
+    return n * factorial(n - 1)
+
+@inline
+fun square(x: i32) i32
+    return x * x
+
+// generic — monomorphized per type at call site
+fun min_val<T>(a: T, b: T) T
+    if a < b
+        return a
+    return b
+
+fun max_val<T>(a: T, b: T) T
+    if a > b
+        return a
+    return b
+
+// function reference parameter
+fun apply(f: fun(i32) i32, x: i32) i32
+    return f(x)
+
+fun apply2(f: fun(i32, i32) i32, a: i32, b: i32) i32
+    return f(a, b)
+
+// void function reference
+fun repeat(f: fun(i32), count: i32)
+    for i in 0..count
+        f(i)
+
+fun _print_num(n: i32)
+    console.write_i32(n)
+    console.write_byte(' ')
+
+fun main()
+    console.write_i32(add(3, 4))
+    console.write_byte(10)
+
+    console.write_i32(factorial(6))
+    console.write_byte(10)
+
+    console.write_i32(square(7))
+    console.write_byte(10)
+
+    // generics — explicit type parameter
+    console.write_i32(min_val<i32>(10, 7))
+    console.write_byte(10)
+
+    console.write_float(max_val<float>(1.5, 2.5))
+    console.write_byte(10)
+
+    // function references
+    var f: fun(i32) i32 = square
+    console.write_i32(apply(f, 5))
+    console.write_byte(10)
+
+    f = factorial
+    console.write_i32(apply(f, 5))
+    console.write_byte(10)
+
+    console.write_i32(apply2(add, 8, 9))
+    console.write_byte(10)
+
+    // pass function ref to higher-order function
+    repeat(_print_num, 5)
+    console.write_byte(10)

@@ -1,0 +1,52 @@
+// Demonstrates: primitive types, var/val/const, type inference, casting, literals
+import console
+
+const MAX_SIZE = 256
+const SCALE: float = 1.5
+
+fun main()
+    // integers — must cast explicitly, no implicit conversions
+    var a: i32 = 100
+    val b: u8 = 255
+    var c := 42             // inferred as i32
+
+    // widening and narrowing casts
+    var wide := i64(a) * 1000
+    var narrow := u8(a)     // truncates if value > 255
+
+    // float (32-bit only — no f64)
+    var f: float = 3.14
+    var from_int := float(a) / 3.0
+
+    // fixed-point (16.16)
+    var q: fixed = 1.5      // 1.5 * 65536 internally
+    var q2: q16 = 2.0       // q16 and fixed are aliases
+
+    // bool
+    var flag := true
+    var other: bool = false
+
+    // print results
+    console.write_string("a=")
+    console.write_i32(a)
+    console.write_byte(10)
+
+    console.write_string("wide=")
+    console.write_i64(wide)
+    console.write_byte(10)
+
+    console.write_string("f=")
+    console.write_float(f)
+    console.write_byte(10)
+
+    console.write_string("q=")
+    console.write_fixed(q)
+    console.write_byte(10)
+
+    // bitwise operators — no implicit promotion, types must match
+    var bits: u32 = 0xFF00 & 0xF0F0
+    var shifted := bits >> 4
+    var masked := bits | 0x000F
+
+    console.write_u32(bits)
+    console.write_byte(10)

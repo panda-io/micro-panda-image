@@ -1,0 +1,89 @@
+// Demonstrates: class declaration, constructor fields, methods, composition,
+//               global instances, passing classes by reference
+import console
+
+// Constructor params with var/val become fields.
+// Extra fields with defaults go in the class body.
+class Counter(var step: i32)
+    var count: i32 = 0
+
+    fun tick()
+        count += step
+
+    fun reset()
+        count = 0
+
+    fun value() i32
+        return count
+
+// Composition — embed another class as a field.
+// No inheritance in Micro Panda; use composition instead.
+class Timer
+    var counter: Counter
+    var elapsed_ms: i32 = 0
+
+    fun tick(dt_ms: i32)
+        counter.tick()
+        elapsed_ms += dt_ms
+
+// Class with no constructor params — declare at global scope, fields default to zero.
+class Stats
+    var min_val: i32 = 2147483647
+    var max_val: i32 = -2147483648
+    var total: i32 = 0
+    var count: i32 = 0
+
+    fun add(v: i32)
+        if v < min_val
+            min_val = v
+        if v > max_val
+            max_val = v
+        total += v
+        count++
+
+    fun average() i32
+        if count == 0
+            return 0
+        return total / count
+
+// Class types must be passed by reference in function params — no implicit copies.
+fun print_stats(s: &Stats)
+    console.write_string("min=")
+    console.write_i32(s.min_val)
+    console.write_string(" max=")
+    console.write_i32(s.max_val)
+    console.write_string(" avg=")
+    console.write_i32(s.average())
+    console.write_byte(10)
+
+// Global instances — static lifetime. Call constructor with args or use bare type.
+val _counter := Counter(2)
+val _timer: Timer
+val _stats: Stats
+
+fun main()
+    // Counter with step=2
+    _counter.tick()
+    _counter.tick()
+    _counter.tick()
+    console.write_i32(_counter.value())   // 6
+    console.write_byte(10)
+
+    _counter.reset()
+    console.write_i32(_counter.value())   // 0
+    console.write_byte(10)
+
+    // Timer embeds Counter (zero-initialized, step=0 by default)
+    _timer.counter.step = 1
+    _timer.tick(16)
+    _timer.tick(16)
+    console.write_i32(_timer.counter.value())  // 2
+    console.write_byte(10)
+    console.write_i32(_timer.elapsed_ms)        // 32
+    console.write_byte(10)
+
+    // Stats
+    var values := [5, 3, 8, 1, 9, 4]
+    for v in values
+        _stats.add(v)
+    print_stats(&_stats)

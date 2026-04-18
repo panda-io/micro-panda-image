@@ -1,0 +1,14 @@
+name: myapp
+version: 0.1.0
+
+targets:
+  main:
+    entry: main
+    src: src/
+    type: bin
+    flags: [HOSTED]
+    output: bin/main
+    test: test/
+    cc:
+      bin: gcc
+      flags: [-g, -O0, -Wall]
