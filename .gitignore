@@ -1,4 +1,5 @@
 .vscode
 .micro-panda
+.claude
 bin/
 out/
