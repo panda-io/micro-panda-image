@@ -1,7 +1,6 @@
 import stb_image
 import converter::convert
 import hosted.file
-import test
 
 #if HOSTED
 
