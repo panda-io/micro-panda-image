@@ -1,5 +1,7 @@
 import stb_image
 import converter::convert
+import converter::convert_sprite_sheet
+import converter::convert_bdf_font
 import hosted.file
 
 #if HOSTED
@@ -144,5 +146,179 @@ fun test_convert_rle()
     val r := convert("/tmp/pimg_test_in.png", 8, "", "", "/tmp/pimg_out_rle.mpd", "img", true)
     assert(r == 1)
     assert(_file_exists("/tmp/pimg_out_rle.mpd"))
+
+// Writes a minimal 4x1 RGB PNG (4 solid-red 1x1 pixels in a row).
+// Used as a 4-sprite, 1x1 sprite sheet source.
+fun _write_4x1_red(path: byte[]) bool
+    // Hand-crafted 4x1 8-bit RGB PNG (no compression, stored block).
+    var d: byte[85]
+    // PNG signature
+    d[0]  = byte(0x89)
+    d[1]  = byte(0x50)
+    d[2]  = byte(0x4E)
+    d[3]  = byte(0x47)
+    d[4]  = byte(0x0D)
+    d[5]  = byte(0x0A)
+    d[6]  = byte(0x1A)
+    d[7]  = byte(0x0A)
+    // IHDR: width=4, height=1, 8-bit RGB
+    d[8]  = 0
+    d[9]  = 0
+    d[10] = 0
+    d[11] = byte(0x0D)
+    d[12] = byte(0x49)
+    d[13] = byte(0x48)
+    d[14] = byte(0x44)
+    d[15] = byte(0x52)
+    d[16] = 0
+    d[17] = 0
+    d[18] = 0
+    d[19] = 4
+    d[20] = 0
+    d[21] = 0
+    d[22] = 0
+    d[23] = 1
+    d[24] = 8
+    d[25] = 2
+    d[26] = 0
+    d[27] = 0
+    d[28] = 0
+    d[29] = byte(0xA3)
+    d[30] = byte(0x90)
+    d[31] = byte(0x34)
+    d[32] = byte(0x18)
+    // IDAT: stored block, filter=0, RRRR×1 (4 red pixels)
+    d[33] = 0
+    d[34] = 0
+    d[35] = 0
+    d[36] = byte(0x18)
+    d[37] = byte(0x49)
+    d[38] = byte(0x44)
+    d[39] = byte(0x41)
+    d[40] = byte(0x54)
+    d[41] = byte(0x78)
+    d[42] = 1
+    d[43] = 1
+    d[44] = byte(0x0D)
+    d[45] = 0
+    d[46] = byte(0xF2)
+    d[47] = byte(0xFF)
+    // filter byte + 4 RGB pixels (R=255,G=0,B=0)
+    d[48] = 0
+    d[49] = byte(0xFF)
+    d[50] = 0
+    d[51] = 0
+    d[52] = byte(0xFF)
+    d[53] = 0
+    d[54] = 0
+    d[55] = byte(0xFF)
+    d[56] = 0
+    d[57] = 0
+    d[58] = byte(0xFF)
+    d[59] = 0
+    d[60] = 0
+    // adler32
+    d[61] = byte(0x08)
+    d[62] = byte(0x04)
+    d[63] = byte(0x07)
+    d[64] = byte(0xFD)
+    // CRC
+    d[65] = byte(0xAA)
+    d[66] = byte(0xC8)
+    d[67] = byte(0x3B)
+    d[68] = byte(0xE4)
+    // IEND
+    d[69] = 0
+    d[70] = 0
+    d[71] = 0
+    d[72] = 0
+    d[73] = byte(0x49)
+    d[74] = byte(0x45)
+    d[75] = byte(0x4E)
+    d[76] = byte(0x44)
+    d[77] = byte(0xAE)
+    d[78] = byte(0x42)
+    d[79] = byte(0x60)
+    d[80] = byte(0x82)
+    if !_f.open(path, file.WRITE)
+        return false
+    _f.write_bytes({&d[0], 81})
+    _f.close()
+    return true
+
+// Writes a minimal valid BDF font file with 2 glyphs (enc 32,33), 4x4.
+fun _write_minimal_bdf(path: byte[]) bool
+    if !_f.open(path, file.WRITE)
+        return false
+    _f.write_string("STARTFONT 2.1\n")
+    _f.write_string("FONT test\n")
+    _f.write_string("SIZE 4 75 75\n")
+    _f.write_string("FONTBOUNDINGBOX 4 4 0 0\n")
+    _f.write_string("STARTPROPERTIES 0\n")
+    _f.write_string("ENDPROPERTIES\n")
+    _f.write_string("CHARS 2\n")
+    _f.write_string("STARTCHAR space\n")
+    _f.write_string("ENCODING 32\n")
+    _f.write_string("DWIDTH 4 0\n")
+    _f.write_string("BBX 4 4 0 0\n")
+    _f.write_string("BITMAP\n")
+    _f.write_string("00\n")
+    _f.write_string("00\n")
+    _f.write_string("00\n")
+    _f.write_string("00\n")
+    _f.write_string("ENDCHAR\n")
+    _f.write_string("STARTCHAR exclam\n")
+    _f.write_string("ENCODING 33\n")
+    _f.write_string("DWIDTH 4 0\n")
+    _f.write_string("BBX 4 4 0 0\n")
+    _f.write_string("BITMAP\n")
+    _f.write_string("F0\n")
+    _f.write_string("F0\n")
+    _f.write_string("F0\n")
+    _f.write_string("F0\n")
+    _f.write_string("ENDCHAR\n")
+    _f.write_string("ENDFONT\n")
+    _f.close()
+    return true
+
+@test
+fun test_convert_sprite_sheet_basic()
+    assert(_write_1x1_red("/tmp/pimg_ss_in.png"))
+    val r := convert_sprite_sheet("/tmp/pimg_ss_in.png", 1, 1, 8, "", "", "/tmp/pimg_ss_out.mpd", "sprites", false)
+    assert(r == 1)
+    assert(_file_exists("/tmp/pimg_ss_out.mpd"))
+
+@test
+fun test_convert_sprite_sheet_invalid_size()
+    assert(_write_1x1_red("/tmp/pimg_ss_in.png"))
+    // sprite size doesn't divide image dimensions
+    val r := convert_sprite_sheet("/tmp/pimg_ss_in.png", 3, 3, 8, "", "", "/tmp/pimg_ss_bad.mpd", "sprites", false)
+    assert(r == 0)
+
+@test
+fun test_convert_sprite_sheet_rle()
+    assert(_write_1x1_red("/tmp/pimg_ss_in.png"))
+    val r := convert_sprite_sheet("/tmp/pimg_ss_in.png", 1, 1, 8, "", "", "/tmp/pimg_ss_rle.mpd", "sprites", true)
+    assert(r == 1)
+    assert(_file_exists("/tmp/pimg_ss_rle.mpd"))
+
+@test
+fun test_convert_bdf_font_basic()
+    assert(_write_minimal_bdf("/tmp/pimg_test.bdf"))
+    val r := convert_bdf_font("/tmp/pimg_test.bdf", "/tmp/pimg_font_out.mpd", "myfont", false)
+    assert(r == 1)
+    assert(_file_exists("/tmp/pimg_font_out.mpd"))
+
+@test
+fun test_convert_bdf_font_invalid()
+    val r := convert_bdf_font("/nonexistent/path/test.bdf", "/tmp/pimg_font_bad.mpd", "f", false)
+    assert(r == 0)
+
+@test
+fun test_convert_bdf_font_rle()
+    assert(_write_minimal_bdf("/tmp/pimg_test.bdf"))
+    val r := convert_bdf_font("/tmp/pimg_test.bdf", "/tmp/pimg_font_rle.mpd", "myfont", true)
+    assert(r == 1)
+    assert(_file_exists("/tmp/pimg_font_rle.mpd"))
 
 #end

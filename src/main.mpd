@@ -4,6 +4,8 @@ import string::parse_u32
 import hosted.args::arg_count
 import hosted.args::arg_value
 import converter::convert
+import converter::convert_sprite_sheet
+import converter::convert_bdf_font
 
 fun main()
     if arg_count() < 2
@@ -11,17 +13,23 @@ fun main()
         return
 
     val input := arg_value(1)
+    var mode: byte[] = "image"
     var bits: int = 8
     var palette: byte[] = ""
     var out_palette: byte[] = ""
     var output: byte[] = ""
     var name: byte[] = ""
     var rle: bool = false
+    var sprite_w: int = 0
+    var sprite_h: int = 0
 
     var i: int = 2
     while i < arg_count()
         val arg := arg_value(i)
-        if equals(arg, "--bits") && i + 1 < arg_count()
+        if equals(arg, "--mode") && i + 1 < arg_count()
+            i += 1
+            mode = arg_value(i)
+        else if equals(arg, "--bits") && i + 1 < arg_count()
             i += 1
             bits = int(parse_u32(arg_value(i)))
         else if equals(arg, "--palette") && i + 1 < arg_count()
@@ -36,27 +44,57 @@ fun main()
         else if equals(arg, "--name") && i + 1 < arg_count()
             i += 1
             name = arg_value(i)
+        else if equals(arg, "--sprite-width") && i + 1 < arg_count()
+            i += 1
+            sprite_w = int(parse_u32(arg_value(i)))
+        else if equals(arg, "--sprite-height") && i + 1 < arg_count()
+            i += 1
+            sprite_h = int(parse_u32(arg_value(i)))
         else if equals(arg, "--rle")
             rle = true
         i += 1
 
-    if bits != 1 && bits != 2 && bits != 4 && bits != 8
-        console.print("Error: --bits must be 1, 2, 4, or 8")
-        return
-
-    val ok := convert(input, bits, palette, out_palette, output, name, rle)
-    if ok == 0
-        console.print("Error: conversion failed")
+    if equals(mode, "image")
+        if bits != 1 && bits != 2 && bits != 4 && bits != 8
+            console.print("Error: --bits must be 1, 2, 4, or 8")
+            return
+        val ok := convert(input, bits, palette, out_palette, output, name, rle)
+        if ok == 0
+            console.print("Error: conversion failed")
+    else if equals(mode, "sprite-sheet")
+        if sprite_w <= 0 || sprite_h <= 0
+            console.print("Error: --sprite-width and --sprite-height are required for sprite-sheet mode")
+            return
+        if bits != 1 && bits != 2 && bits != 4 && bits != 8
+            console.print("Error: --bits must be 1, 2, 4, or 8")
+            return
+        val ok := convert_sprite_sheet(input, sprite_w, sprite_h, bits, palette, out_palette, output, name, rle)
+        if ok == 0
+            console.print("Error: sprite sheet conversion failed")
+    else if equals(mode, "bdf-font")
+        val ok := convert_bdf_font(input, output, name, rle)
+        if ok == 0
+            console.print("Error: BDF font conversion failed")
+    else
+        console.print("Error: unknown --mode value (expected: image, sprite-sheet, bdf-font)")
 
 fun _print_usage()
     console.print("pimg — Panda Image Converter")
-    console.print("Usage: pimg <input.png|jpg> [options]")
+    console.print("Usage: pimg <input> [options]")
+    console.print("")
+    console.print("Modes (--mode):")
+    console.print("  image          convert PNG/JPG to Image (default)")
+    console.print("  sprite-sheet   convert PNG/JPG strip/grid to SpriteSheet")
+    console.print("  bdf-font       convert BDF bitmap font to SpriteSheet + Font")
     console.print("")
     console.print("Options:")
+    console.print("  --mode image|sprite-sheet|bdf-font  (default: image)")
     console.print("  --bits 1|2|4|8         color depth (default: 8)")
     console.print("                         1=2 colors  2=4 colors  4=16 colors  8=256 colors")
+    console.print("  --sprite-width N       sprite width in pixels  (sprite-sheet mode)")
+    console.print("  --sprite-height N      sprite height in pixels (sprite-sheet mode)")
     console.print("  --palette file.png     use specified palette (1px high, width=color count)")
     console.print("  --out-palette file.png save auto-generated palette as PNG")
-    console.print("  --output file.mpd      output file (default: <name>_<bits>bit.mpd)")
+    console.print("  --output file.mpd      output file")
     console.print("  --name varname         variable name prefix in generated code")
     console.print("  --rle                  RLE-compress pixel data (Compress.RLE)")
